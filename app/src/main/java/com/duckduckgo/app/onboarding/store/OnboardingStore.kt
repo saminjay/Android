@@ -16,11 +16,6 @@
 
 package com.duckduckgo.app.onboarding.store
 
-
 interface OnboardingStore {
-
-    val shouldShow: Boolean
-
-    fun onboardingShown()
-
+    var onboardingDialogJourney: String?
 }

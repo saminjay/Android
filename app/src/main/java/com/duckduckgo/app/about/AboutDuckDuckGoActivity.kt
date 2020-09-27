@@ -19,28 +19,24 @@ package com.duckduckgo.app.about
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
-import android.support.v7.app.AppCompatActivity
+import com.duckduckgo.app.browser.BrowserActivity
 import com.duckduckgo.app.browser.R
-import com.duckduckgo.app.home.HomeActivity
+import com.duckduckgo.app.global.AppUrl.Url
+import com.duckduckgo.app.global.DuckDuckGoActivity
 import kotlinx.android.synthetic.main.content_about_duck_duck_go.*
 import kotlinx.android.synthetic.main.include_toolbar.*
 
-class AboutDuckDuckGoActivity : AppCompatActivity() {
+class AboutDuckDuckGoActivity : DuckDuckGoActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_about_duck_duck_go)
-        configureActionBar()
+        setupToolbar(toolbar)
 
         learnMoreLink.setOnClickListener {
-            startActivity(HomeActivity.intent(this, getString(R.string.aboutUrl)))
+            startActivity(BrowserActivity.intent(this, Url.ABOUT))
             finish()
         }
-    }
-
-    private fun configureActionBar() {
-        setSupportActionBar(toolbar)
-        supportActionBar?.setDisplayHomeAsUpEnabled(true)
     }
 
     companion object {

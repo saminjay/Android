@@ -16,14 +16,19 @@
 
 package com.duckduckgo.app.di
 
-
 import android.app.Application
-import com.duckduckgo.app.browser.autoComplete.BrowserAutoCompleteModule
+import com.duckduckgo.app.browser.autocomplete.BrowserAutoCompleteModule
 import com.duckduckgo.app.browser.di.BrowserModule
+import com.duckduckgo.app.browser.favicon.FaviconModule
+import com.duckduckgo.app.browser.rating.di.RatingModule
 import com.duckduckgo.app.global.DuckDuckGoApplication
+import com.duckduckgo.app.global.exception.UncaughtExceptionModule
 import com.duckduckgo.app.httpsupgrade.di.HttpsUpgraderModule
+import com.duckduckgo.app.onboarding.di.OnboardingModule
 import com.duckduckgo.app.surrogates.di.ResourceSurrogateModule
 import com.duckduckgo.app.trackerdetection.di.TrackerDetectionModule
+import com.duckduckgo.app.usage.di.AppUsageModule
+import com.duckduckgo.widget.SearchWidget
 import dagger.BindsInstance
 import dagger.Component
 import dagger.android.AndroidInjector
@@ -31,28 +36,50 @@ import dagger.android.support.AndroidSupportInjectionModule
 import javax.inject.Singleton
 
 @Singleton
-@Component(modules = [
-    (ApplicationModule::class),
-    (JobsModule::class),
-    (AndroidBindingModule::class),
-    (AndroidSupportInjectionModule::class),
-    (NetworkModule::class),
-    (StoreModule::class),
-    (DatabaseModule::class),
-    (JsonModule::class),
-    (StringModule::class),
-    (BrowserModule::class),
-    (BrowserAutoCompleteModule::class),
-    (HttpsUpgraderModule::class),
-    (ResourceSurrogateModule::class),
-    (TrackerDetectionModule::class)
-])
+@Component(
+    modules = [
+        ApplicationModule::class,
+        JobsModule::class,
+        WorkerModule::class,
+        AndroidBindingModule::class,
+        AndroidSupportInjectionModule::class,
+        NetworkModule::class,
+        AppConfigurationDownloaderModule::class,
+        StatisticsModule::class,
+        StoreModule::class,
+        DatabaseModule::class,
+        DaoModule::class,
+        JsonModule::class,
+        SystemComponentsModule::class,
+        BrowserModule::class,
+        BrowserAutoCompleteModule::class,
+        HttpsUpgraderModule::class,
+        ResourceSurrogateModule::class,
+        TrackerDetectionModule::class,
+        NotificationModule::class,
+        OnboardingModule::class,
+        VariantModule::class,
+        FaviconModule::class,
+        PrivacyModule::class,
+        WidgetModule::class,
+        RatingModule::class,
+        AppUsageModule::class,
+        FileModule::class,
+        UncaughtExceptionModule::class,
+        PlayStoreReferralModule::class,
+        CoroutinesModule::class
+    ]
+)
 interface AppComponent : AndroidInjector<DuckDuckGoApplication> {
 
     @Component.Builder
-    abstract class Builder : AndroidInjector.Builder<DuckDuckGoApplication>() {
+    interface Builder {
 
         @BindsInstance
-        abstract fun application(application: Application): AppComponent.Builder
+        fun application(application: Application): Builder
+
+        fun build(): AppComponent
     }
+
+    fun inject(searchWidget: SearchWidget)
 }

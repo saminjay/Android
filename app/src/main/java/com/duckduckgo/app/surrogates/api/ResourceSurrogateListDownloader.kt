@@ -16,19 +16,18 @@
 
 package com.duckduckgo.app.surrogates.api
 
+import com.duckduckgo.app.global.api.isCached
 import com.duckduckgo.app.surrogates.ResourceSurrogateLoader
 import com.duckduckgo.app.surrogates.store.ResourceSurrogateDataStore
-import com.duckduckgo.app.global.api.isCached
 import io.reactivex.Completable
 import timber.log.Timber
 import java.io.IOException
 import javax.inject.Inject
 
-
 class ResourceSurrogateListDownloader @Inject constructor(
-        private val service: ResourceSurrogateListService,
-        private val surrogatesDataStore: ResourceSurrogateDataStore,
-        private val resourceSurrogateLoader: ResourceSurrogateLoader
+    private val service: ResourceSurrogateListService,
+    private val surrogatesDataStore: ResourceSurrogateDataStore,
+    private val resourceSurrogateLoader: ResourceSurrogateLoader
 ) {
 
     fun downloadList(): Completable {
@@ -37,7 +36,7 @@ class ResourceSurrogateListDownloader @Inject constructor(
 
             Timber.d("Downloading Google Analytics Surrogates data")
 
-            val call = service.https()
+            val call = service.surrogates()
             val response = call.execute()
 
             Timber.d("Response received, success=${response.isSuccessful}")

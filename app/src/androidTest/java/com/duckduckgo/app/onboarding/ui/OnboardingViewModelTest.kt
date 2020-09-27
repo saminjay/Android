@@ -16,32 +16,37 @@
 
 package com.duckduckgo.app.onboarding.ui
 
-import android.arch.core.executor.testing.InstantTaskExecutorRule
-import com.duckduckgo.app.onboarding.store.OnboardingStore
-import com.nhaarman.mockito_kotlin.mock
-import com.nhaarman.mockito_kotlin.never
-import com.nhaarman.mockito_kotlin.verify
+import androidx.arch.core.executor.testing.InstantTaskExecutorRule
+import com.duckduckgo.app.CoroutineTestRule
+import com.duckduckgo.app.onboarding.store.AppStage
+import com.duckduckgo.app.onboarding.store.UserStageStore
+import com.nhaarman.mockitokotlin2.mock
+import com.nhaarman.mockitokotlin2.verify
+import kotlinx.coroutines.test.runBlockingTest
 import org.junit.Rule
 import org.junit.Test
 
-
+@Suppress("EXPERIMENTAL_API_USAGE")
 class OnboardingViewModelTest {
 
     @get:Rule
     @Suppress("unused")
     var instantTaskExecutorRule = InstantTaskExecutorRule()
 
-    private var onboardingStore: OnboardingStore = mock()
+    @get:Rule
+    var coroutineRule = CoroutineTestRule()
+
+    private var userStageStore: UserStageStore = mock()
+
+    private val pageLayout: OnboardingPageManager = mock()
 
     private val testee: OnboardingViewModel by lazy {
-        OnboardingViewModel(onboardingStore)
+        OnboardingViewModel(userStageStore, pageLayout, coroutineRule.testDispatcherProvider)
     }
 
     @Test
-    fun whenOnboardingDoneThenStoreNotifiedThatOnboardingShown() {
-        verify(onboardingStore, never()).onboardingShown()
+    fun whenOnboardingDoneThenCompleteStage() = runBlockingTest {
         testee.onOnboardingDone()
-        verify(onboardingStore).onboardingShown()
+        verify(userStageStore).stageCompleted(AppStage.NEW)
     }
-
 }

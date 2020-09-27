@@ -16,15 +16,15 @@
 
 package com.duckduckgo.app.autocomplete.api
 
+import com.duckduckgo.app.global.AppUrl
 import io.reactivex.Observable
 import retrofit2.http.GET
 import retrofit2.http.Query
 
-
 interface AutoCompleteService {
 
-    @GET("https://duckduckgo.com/ac/")
-    fun autoComplete(@Query("q") query: String) : Observable<List<AutoCompleteServiceRawResult>>
+    @GET("${AppUrl.Url.API}/ac/")
+    fun autoComplete(@Query("q") query: String): Observable<List<AutoCompleteServiceRawResult>>
 }
 
-data class AutoCompleteServiceRawResult(val phrase:String)
+data class AutoCompleteServiceRawResult(val phrase: String)

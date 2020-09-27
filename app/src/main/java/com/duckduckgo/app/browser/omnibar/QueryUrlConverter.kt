@@ -17,56 +17,43 @@
 package com.duckduckgo.app.browser.omnibar
 
 import android.net.Uri
-import android.support.v4.util.PatternsCompat
+import android.webkit.URLUtil
 import com.duckduckgo.app.browser.RequestRewriter
-import com.duckduckgo.app.global.UrlScheme.Companion.http
+import com.duckduckgo.app.global.AppUrl
+import com.duckduckgo.app.global.AppUrl.Url
+import com.duckduckgo.app.global.UriString
 import com.duckduckgo.app.global.UrlScheme.Companion.https
 import com.duckduckgo.app.global.withScheme
 import javax.inject.Inject
 
 class QueryUrlConverter @Inject constructor(private val requestRewriter: RequestRewriter) : OmnibarEntryConverter {
 
-    companion object {
-        private const val baseUrl = "duckduckgo.com"
-        private const val localhost = "localhost"
-        private const val space = " "
-        private val webUrlRegex = PatternsCompat.WEB_URL.toRegex()
-    }
+    override fun convertQueryToUrl(searchQuery: String, vertical: String?): String {
+        if (UriString.isWebUrl(searchQuery)) {
+            return convertUri(searchQuery)
+        }
 
-    override fun isWebUrl(inputQuery: String): Boolean {
-        val uri = Uri.parse(inputQuery).withScheme()
-        if (uri.scheme != http && uri.scheme != https) return false
-        if (uri.userInfo != null) return false
-        if (uri.host == null) return false
-        if (uri.path.contains(space)) return false
+        if (URLUtil.isDataUrl(searchQuery)) {
+            return searchQuery
+        }
 
-        return isValidHost(uri.host)
-    }
-
-    private fun isValidHost(host: String): Boolean {
-        if (host == localhost) return true
-        if (host.contains(space)) return false
-        if (host.contains("!")) return false
-
-        if (webUrlRegex.containsMatchIn(host)) return true
-        return false
-    }
-
-    override fun convertQueryToUri(inputQuery: String): Uri {
         val uriBuilder = Uri.Builder()
-                .scheme(https)
-                .appendQueryParameter("q", inputQuery)
-                .authority(baseUrl)
+            .scheme(https)
+            .appendQueryParameter(AppUrl.ParamKey.QUERY, searchQuery)
+            .authority(Url.HOST)
+
+        vertical?.let {
+            uriBuilder.appendQueryParameter(AppUrl.ParamKey.VERTICAL_REWRITE, vertical)
+        }
 
         requestRewriter.addCustomQueryParams(uriBuilder)
-
-        return uriBuilder.build()
+        return uriBuilder.build().toString()
     }
 
-    override fun convertUri(input: String): String {
+    private fun convertUri(input: String): String {
         val uri = Uri.parse(input).withScheme()
 
-        if (uri.host == baseUrl) {
+        if (uri.host == Url.HOST) {
             return requestRewriter.rewriteRequestWithCustomQueryParams(uri).toString()
         }
 

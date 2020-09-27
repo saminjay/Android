@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 DuckDuckGo
+ * Copyright (c) 2018 DuckDuckGo
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,346 +16,218 @@
 
 package com.duckduckgo.app.browser
 
-import android.arch.lifecycle.MutableLiveData
-import android.arch.lifecycle.Observer
-import android.arch.lifecycle.ViewModel
-import android.net.Uri
-import android.support.annotation.AnyThread
-import android.support.annotation.VisibleForTesting
-import android.support.annotation.WorkerThread
-import android.view.ContextMenu
-import android.view.MenuItem
-import android.view.View
-import android.webkit.WebView
-import com.duckduckgo.app.autocomplete.api.AutoCompleteApi
-import com.duckduckgo.app.autocomplete.api.AutoCompleteApi.AutoCompleteResult
-import com.duckduckgo.app.bookmarks.db.BookmarkEntity
-import com.duckduckgo.app.bookmarks.db.BookmarksDao
-import com.duckduckgo.app.browser.BrowserViewModel.Command.Navigate
-import com.duckduckgo.app.browser.LongPressHandler.RequiredAction
+import androidx.annotation.StringRes
+import androidx.lifecycle.LiveData
+import androidx.lifecycle.MutableLiveData
+import androidx.lifecycle.Observer
+import androidx.lifecycle.ViewModel
+import com.duckduckgo.app.browser.BrowserViewModel.Command.DisplayMessage
+import com.duckduckgo.app.browser.BrowserViewModel.Command.Refresh
 import com.duckduckgo.app.browser.omnibar.OmnibarEntryConverter
+import com.duckduckgo.app.browser.rating.ui.AppEnjoymentDialogFragment
+import com.duckduckgo.app.browser.rating.ui.GiveFeedbackDialogFragment
+import com.duckduckgo.app.browser.rating.ui.RateAppDialogFragment
+import com.duckduckgo.app.fire.DataClearer
+import com.duckduckgo.app.global.ApplicationClearDataState
+import com.duckduckgo.app.global.DefaultDispatcherProvider
+import com.duckduckgo.app.global.DispatcherProvider
 import com.duckduckgo.app.global.SingleLiveEvent
-import com.duckduckgo.app.privacymonitor.SiteMonitor
-import com.duckduckgo.app.privacymonitor.db.NetworkLeaderboardDao
-import com.duckduckgo.app.privacymonitor.db.NetworkLeaderboardEntry
-import com.duckduckgo.app.privacymonitor.model.PrivacyGrade
-import com.duckduckgo.app.privacymonitor.model.TermsOfService
-import com.duckduckgo.app.privacymonitor.model.improvedGrade
-import com.duckduckgo.app.privacymonitor.store.PrivacyMonitorRepository
-import com.duckduckgo.app.privacymonitor.store.TermsOfServiceStore
-import com.duckduckgo.app.privacymonitor.ui.PrivacyDashboardActivity.Companion.RELOAD_RESULT_CODE
-import com.duckduckgo.app.settings.db.AppConfigurationDao
-import com.duckduckgo.app.settings.db.AppConfigurationEntity
-import com.duckduckgo.app.settings.db.SettingsDataStore
-import com.duckduckgo.app.trackerdetection.model.TrackerNetworks
-import com.duckduckgo.app.trackerdetection.model.TrackingEvent
-import com.jakewharton.rxrelay2.PublishRelay
-import io.reactivex.android.schedulers.AndroidSchedulers
-import io.reactivex.schedulers.Schedulers
+import com.duckduckgo.app.global.rating.AppEnjoymentPromptEmitter
+import com.duckduckgo.app.global.rating.AppEnjoymentPromptOptions
+import com.duckduckgo.app.global.rating.AppEnjoymentUserEventRecorder
+import com.duckduckgo.app.global.rating.PromptCount
+import com.duckduckgo.app.global.useourapp.UseOurAppDetector
+import com.duckduckgo.app.privacy.ui.PrivacyDashboardActivity.Companion.RELOAD_RESULT_CODE
+import com.duckduckgo.app.statistics.pixels.Pixel
+import com.duckduckgo.app.tabs.model.TabEntity
+import com.duckduckgo.app.tabs.model.TabRepository
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import timber.log.Timber
-import java.util.concurrent.TimeUnit
+import kotlin.coroutines.CoroutineContext
 
 class BrowserViewModel(
-        private val queryUrlConverter: OmnibarEntryConverter,
-        private val duckDuckGoUrlDetector: DuckDuckGoUrlDetector,
-        private val termsOfServiceStore: TermsOfServiceStore,
-        private val trackerNetworks: TrackerNetworks,
-        private val privacyMonitorRepository: PrivacyMonitorRepository,
-        private val networkLeaderboardDao: NetworkLeaderboardDao,
-        private val bookmarksDao: BookmarksDao,
-        private val autoCompleteApi: AutoCompleteApi,
-        private val appSettingsPreferencesStore: SettingsDataStore,
-        private val longPressHandler: LongPressHandler,
-        appConfigurationDao: AppConfigurationDao) : WebViewClientListener, ViewModel() {
+    private val tabRepository: TabRepository,
+    private val queryUrlConverter: OmnibarEntryConverter,
+    private val dataClearer: DataClearer,
+    private val appEnjoymentPromptEmitter: AppEnjoymentPromptEmitter,
+    private val appEnjoymentUserEventRecorder: AppEnjoymentUserEventRecorder,
+    private val dispatchers: DispatcherProvider = DefaultDispatcherProvider(),
+    private val pixel: Pixel,
+    private val useOurAppDetector: UseOurAppDetector
+) : AppEnjoymentDialogFragment.Listener,
+    RateAppDialogFragment.Listener,
+    GiveFeedbackDialogFragment.Listener,
+    ViewModel(),
+    CoroutineScope {
+
+    override val coroutineContext: CoroutineContext
+        get() = Dispatchers.Main
 
     data class ViewState(
-            val isLoading: Boolean = false,
-            val progress: Int = 0,
-            val omnibarText: String? = null,
-            val isEditing: Boolean = false,
-            val browserShowing: Boolean = false,
-            val showClearButton: Boolean = false,
-            val showPrivacyGrade: Boolean = false,
-            val showFireButton: Boolean = true,
-            val canAddBookmarks: Boolean = false,
-            val showAutoCompleteSuggestions: Boolean = false,
-            val isFullScreen: Boolean = false,
-            val autoCompleteSearchResults: AutoCompleteResult = AutoCompleteResult("", emptyList())
+        val hideWebContent: Boolean = true
     )
 
     sealed class Command {
-
-        object LandingPage : Command()
         object Refresh : Command()
-        class Navigate(val url: String) : Command()
-        class DialNumber(val telephoneNumber: String) : Command()
-        class SendSms(val telephoneNumber: String) : Command()
-        class SendEmail(val emailAddress: String) : Command()
-        object ShowKeyboard : Command()
-        object HideKeyboard : Command()
-        object ReinitialiseWebView : Command()
-        class ShowFullScreen(val view: View) : Command()
-        class DownloadImage(val url: String) : Command()
+        data class Query(val query: String) : Command()
+        data class DisplayMessage(@StringRes val messageId: Int) : Command()
+        object LaunchPlayStore : Command()
+        object LaunchFeedbackView : Command()
+        data class ShowAppEnjoymentPrompt(val promptCount: PromptCount) : Command()
+        data class ShowAppRatingPrompt(val promptCount: PromptCount) : Command()
+        data class ShowAppFeedbackPrompt(val promptCount: PromptCount) : Command()
     }
-    /* Observable data for Activity to subscribe to */
-    val viewState: MutableLiveData<ViewState> = MutableLiveData()
 
-    val privacyGrade: MutableLiveData<PrivacyGrade> = MutableLiveData()
-    val url: SingleLiveEvent<String> = SingleLiveEvent()
+    var viewState: MutableLiveData<ViewState> = MutableLiveData<ViewState>().also {
+        it.value = ViewState()
+    }
+
+    private val currentViewState: ViewState
+        get() = viewState.value!!
+
+    var tabs: LiveData<List<TabEntity>> = tabRepository.liveTabs
+    var selectedTab: LiveData<TabEntity> = tabRepository.liveSelectedTab
     val command: SingleLiveEvent<Command> = SingleLiveEvent()
-    @VisibleForTesting
-    val appConfigurationObserver: Observer<AppConfigurationEntity> = Observer { appConfiguration ->
-        appConfiguration?.let {
-            Timber.i("App configuration downloaded: ${it.appConfigurationDownloaded}")
-            appConfigurationDownloaded = it.appConfigurationDownloaded
+
+    private var dataClearingObserver = Observer<ApplicationClearDataState> {
+        it?.let { state ->
+            when (state) {
+                ApplicationClearDataState.INITIALIZING -> {
+                    Timber.i("App clear state initializing")
+                    viewState.value = currentViewState.copy(hideWebContent = true)
+                }
+                ApplicationClearDataState.FINISHED -> {
+                    Timber.i("App clear state finished")
+                    viewState.value = currentViewState.copy(hideWebContent = false)
+                }
+            }
         }
     }
 
-    private val appConfigurationObservable = appConfigurationDao.appConfigurationStatus()
-    private val autoCompletePublishSubject = PublishRelay.create<String>()
-
-    private var siteMonitor: SiteMonitor? = null
-    private var appConfigurationDownloaded = false
+    private val appEnjoymentObserver = Observer<AppEnjoymentPromptOptions> {
+        it?.let { promptType ->
+            when (promptType) {
+                is AppEnjoymentPromptOptions.ShowEnjoymentPrompt -> {
+                    command.value = Command.ShowAppEnjoymentPrompt(promptType.promptCount)
+                }
+                is AppEnjoymentPromptOptions.ShowRatingPrompt -> {
+                    command.value = Command.ShowAppRatingPrompt(promptType.promptCount)
+                }
+                is AppEnjoymentPromptOptions.ShowFeedbackPrompt -> {
+                    command.value = Command.ShowAppFeedbackPrompt(promptType.promptCount)
+                }
+            }
+        }
+    }
 
     init {
-        command.value = Command.ShowKeyboard
-        viewState.value = ViewState(canAddBookmarks = false)
-        appConfigurationObservable.observeForever(appConfigurationObserver)
-
-        configureAutoComplete()
+        appEnjoymentPromptEmitter.promptType.observeForever(appEnjoymentObserver)
     }
 
-    private fun configureAutoComplete() {
-        autoCompletePublishSubject
-                .debounce(300, TimeUnit.MILLISECONDS)
-                .distinctUntilChanged()
-                .switchMap { autoCompleteApi.autoComplete(it) }
-                .subscribeOn(Schedulers.io())
-                .observeOn(AndroidSchedulers.mainThread())
-                .subscribe({ result ->
-                    onAutoCompleteResultReceived(result)
-                }, { t: Throwable? -> Timber.w(t, "Failed to get search results") })
-    }
-
-    private fun onAutoCompleteResultReceived(result: AutoCompleteResult) {
-        val results = result.suggestions.take(6)
-        viewState.value = currentViewState().copy(autoCompleteSearchResults = AutoCompleteResult(result.query, results))
-    }
-
-
-    @VisibleForTesting
-    public override fun onCleared() {
-        super.onCleared()
-        appConfigurationObservable.removeObserver(appConfigurationObserver)
-    }
-
-    fun registerWebViewListener(browserWebViewClient: BrowserWebViewClient, browserChromeClient: BrowserChromeClient) {
-        browserWebViewClient.webViewClientListener = this
-        browserChromeClient.webViewClientListener = this
-    }
-
-    fun onUserSubmittedQuery(input: String) {
-        if (input.isBlank()) {
-            return
-        }
-
-        command.value = Command.HideKeyboard
-
-        val trimmedInput = input.trim()
-        url.value = buildUrl(trimmedInput)
-        viewState.value = currentViewState().copy(
-                showClearButton = false,
-                omnibarText = trimmedInput,
-                showAutoCompleteSuggestions = false,
-                autoCompleteSearchResults = AutoCompleteResult("", emptyList()))
-    }
-
-    private fun buildUrl(input: String): String {
-        if (queryUrlConverter.isWebUrl(input)) {
-            return queryUrlConverter.convertUri(input)
-        }
-        return queryUrlConverter.convertQueryToUri(input).toString()
-    }
-
-    override fun progressChanged(newProgress: Int) {
-        Timber.v("Loading in progress $newProgress")
-        viewState.value = currentViewState().copy(progress = newProgress)
-    }
-
-    override fun goFullScreen(view: View) {
-        command.value = Command.ShowFullScreen(view)
-        viewState.value = currentViewState().copy(isFullScreen = true)
-    }
-
-    override fun exitFullScreen() {
-        viewState.value = currentViewState().copy(isFullScreen = false)
-    }
-
-    override fun loadingStarted() {
-        Timber.v("Loading started")
-        viewState.value = currentViewState().copy(isLoading = true)
-        siteMonitor = null
-        onSiteMonitorChanged()
-    }
-
-    override fun loadingFinished() {
-        Timber.v("Loading finished")
-        viewState.value = currentViewState().copy(isLoading = false)
-    }
-
-    @AnyThread
-    override fun sendEmailRequested(emailAddress: String) {
-        command.postValue(Command.SendEmail(emailAddress))
-    }
-
-    @AnyThread
-    override fun dialTelephoneNumberRequested(telephoneNumber: String) {
-        command.postValue(Command.DialNumber(telephoneNumber))
-    }
-
-    @AnyThread
-    override fun sendSmsRequested(telephoneNumber: String) {
-        command.postValue(Command.SendSms(telephoneNumber))
-    }
-
-    override fun urlChanged(url: String?) {
-        Timber.v("Url changed: $url")
-        if (url == null) {
-            viewState.value = viewState.value?.copy(canAddBookmarks = false)
-            return
-        }
-
-        var newViewState = currentViewState().copy(
-                canAddBookmarks = true,
-                omnibarText = url,
-                browserShowing = true,
-                showFireButton = true,
-                showPrivacyGrade = appConfigurationDownloaded)
-
-        if (duckDuckGoUrlDetector.isDuckDuckGoUrl(url) && duckDuckGoUrlDetector.hasQuery(url)) {
-            newViewState = newViewState.copy(omnibarText = duckDuckGoUrlDetector.extractQuery(url))
-        }
-        viewState.value = newViewState
-
-        val terms = termsOfServiceStore.retrieveTerms(url) ?: TermsOfService()
-        siteMonitor = SiteMonitor(url, terms, trackerNetworks)
-        onSiteMonitorChanged()
-    }
-
-    override fun trackerDetected(event: TrackingEvent) {
-        if (event.documentUrl == siteMonitor?.url) {
-            updateSiteMonitor(event)
-        }
-        updateNetworkLeaderboard(event)
-    }
-
-    private fun updateSiteMonitor(event: TrackingEvent) {
-        siteMonitor?.trackerDetected(event)
-        onSiteMonitorChanged()
-    }
-
-    private fun updateNetworkLeaderboard(event: TrackingEvent) {
-        val networkName = event.trackerNetwork?.name ?: return
-        val domainVisited = Uri.parse(event.documentUrl).host ?: return
-        networkLeaderboardDao.insert(NetworkLeaderboardEntry(networkName, domainVisited))
-    }
-
-    override fun pageHasHttpResources(page: String?) {
-        if (page == siteMonitor?.url) {
-            siteMonitor?.hasHttpResources = true
-            onSiteMonitorChanged()
-        }
-    }
-
-    private fun onSiteMonitorChanged() {
-        privacyGrade.postValue(siteMonitor?.improvedGrade)
-        privacyMonitorRepository.privacyMonitor.postValue(siteMonitor)
-    }
-
-    private fun currentViewState(): ViewState = viewState.value!!
-
-    fun onOmnibarInputStateChanged(query: String, hasFocus: Boolean) {
-        val showClearButton = hasFocus && query.isNotEmpty()
-
-        val currentViewState = currentViewState()
-
-        // determine if empty list to be shown, or existing search results
-        val autoCompleteSearchResults = if (query.isBlank()) {
-            AutoCompleteResult(query, emptyList())
+    suspend fun onNewTabRequested(sourceTabId: String? = null): String {
+        return if (sourceTabId != null) {
+            tabRepository.addFromSourceTab(sourceTabId = sourceTabId)
         } else {
-            currentViewState.autoCompleteSearchResults
-        }
-
-        val hasQueryChanged = (currentViewState.omnibarText != query)
-        val autoCompleteSuggestionsEnabled = appSettingsPreferencesStore.autoCompleteSuggestionsEnabled
-
-        viewState.value = currentViewState().copy(
-                isEditing = hasFocus,
-                showClearButton = showClearButton,
-                showPrivacyGrade = appConfigurationDownloaded && !hasFocus,
-                showFireButton = !hasFocus,
-                showAutoCompleteSuggestions = hasFocus && query.isNotBlank() && hasQueryChanged && autoCompleteSuggestionsEnabled,
-                autoCompleteSearchResults = autoCompleteSearchResults
-        )
-
-        if(hasQueryChanged && hasFocus && autoCompleteSuggestionsEnabled) {
-            autoCompletePublishSubject.accept(query.trim())
+            tabRepository.add()
         }
     }
 
-    fun onSharedTextReceived(input: String) {
-        openUrl(buildUrl(input))
+    suspend fun onOpenInNewTabRequested(query: String, sourceTabId: String? = null, skipHome: Boolean = false): String {
+        return if (sourceTabId != null) {
+            tabRepository.addFromSourceTab(
+                url = queryUrlConverter.convertQueryToUrl(query),
+                skipHome = skipHome,
+                sourceTabId = sourceTabId
+            )
+        } else {
+            tabRepository.add(
+                url = queryUrlConverter.convertQueryToUrl(query),
+                skipHome = skipHome
+            )
+        }
     }
 
-    /**
-     * Returns a boolean indicating if the back button pressed was consumed or not
-     *
-     * May also instruct the Activity to navigate to a different screen because of the back button press
-     */
-    fun userDismissedKeyboard(): Boolean {
-        if (!currentViewState().browserShowing) {
-            command.value = Command.LandingPage
-            return true
+    suspend fun onTabsUpdated(tabs: List<TabEntity>?) {
+        if (tabs.isNullOrEmpty()) {
+            Timber.i("Tabs list is null or empty; adding default tab")
+            tabRepository.addDefaultTab()
+            return
         }
-        return false
     }
 
     fun receivedDashboardResult(resultCode: Int) {
-        if (resultCode == RELOAD_RESULT_CODE) command.value = Command.Refresh
+        if (resultCode == RELOAD_RESULT_CODE) command.value = Refresh
     }
 
-    @WorkerThread
-    fun addBookmark(title: String, url: String) {
-        bookmarksDao.insert(BookmarkEntity(title = title, url = url))
+    fun onClearComplete() {
+        command.value = DisplayMessage(R.string.fireDataCleared)
     }
 
-    private fun openUrl(url: String) {
-        command.value = Navigate(url)
+    /**
+     * To ensure the best UX, we might not want to show anything to the user while the clear is taking place.
+     * This method will await until the ApplicationClearDataState.FINISHED event is received before observing for other changes
+     * The effect of this delay is that we won't show old tabs if they are in the process of deleting them.
+     */
+    fun awaitClearDataFinishedNotification() {
+        dataClearer.dataClearerState.observeForever(dataClearingObserver)
     }
 
-    fun onUserSelectedToEditQuery(query: String) {
-        viewState.value = currentViewState().copy(isEditing = false, showAutoCompleteSuggestions = false, omnibarText = query)
+    override fun onCleared() {
+        super.onCleared()
+        dataClearer.dataClearerState.removeObserver(dataClearingObserver)
+        appEnjoymentPromptEmitter.promptType.removeObserver(appEnjoymentObserver)
     }
 
-    fun userLongPressedInWebView(target: WebView.HitTestResult, menu: ContextMenu) {
-        Timber.i("Long pressed on ${target.type}, (extra=${target.extra})")
-        longPressHandler.handleLongPress(target.type, menu)
+    override fun onUserSelectedAppIsEnjoyed(promptCount: PromptCount) {
+        appEnjoymentUserEventRecorder.onUserEnjoyingApp(promptCount)
     }
 
-    fun userSelectedItemFromLongPressMenu(longPressTarget: String, item: MenuItem): Boolean {
-        val requiredAction = longPressHandler.userSelectedMenuItem(longPressTarget, item)
+    override fun onUserSelectedAppIsNotEnjoyed(promptCount: PromptCount) {
+        appEnjoymentUserEventRecorder.onUserNotEnjoyingApp(promptCount)
+    }
 
-        return when(requiredAction) {
-            is RequiredAction.DownloadFile -> {
-                command.value = Command.DownloadImage(requiredAction.url)
-                true
-            }
-            RequiredAction.None-> {
-                false
+    override fun onUserSelectedToRateApp(promptCount: PromptCount) {
+        command.value = Command.LaunchPlayStore
+
+        launch { appEnjoymentUserEventRecorder.onUserSelectedToRateApp(promptCount) }
+    }
+
+    override fun onUserDeclinedToRateApp(promptCount: PromptCount) {
+        launch { appEnjoymentUserEventRecorder.userDeclinedToRateApp(promptCount) }
+    }
+
+    override fun onUserSelectedToGiveFeedback(promptCount: PromptCount) {
+        command.value = Command.LaunchFeedbackView
+
+        launch { appEnjoymentUserEventRecorder.onUserSelectedToGiveFeedback(promptCount) }
+    }
+
+    override fun onUserDeclinedToGiveFeedback(promptCount: PromptCount) {
+        launch { appEnjoymentUserEventRecorder.onUserDeclinedToGiveFeedback(promptCount) }
+    }
+
+    override fun onUserCancelledAppEnjoymentDialog(promptCount: PromptCount) {
+        launch { appEnjoymentUserEventRecorder.onUserDeclinedToSayIfEnjoyingApp(promptCount) }
+    }
+
+    override fun onUserCancelledRateAppDialog(promptCount: PromptCount) {
+        onUserDeclinedToRateApp(promptCount)
+    }
+
+    override fun onUserCancelledGiveFeedbackDialog(promptCount: PromptCount) {
+        onUserDeclinedToGiveFeedback(promptCount)
+    }
+
+    fun onOpenShortcut(url: String) {
+        launch(dispatchers.io()) {
+            tabRepository.selectByUrlOrNewTab(queryUrlConverter.convertQueryToUrl(url))
+            if (useOurAppDetector.isUseOurAppUrl(url)) {
+                pixel.fire(Pixel.PixelName.USE_OUR_APP_SHORTCUT_OPENED)
+            } else {
+                pixel.fire(Pixel.PixelName.SHORTCUT_OPENED)
             }
         }
     }
 }
-
-
-

@@ -16,53 +16,85 @@
 
 package com.duckduckgo.app.browser
 
+import android.content.Intent
 import android.net.Uri
-import javax.inject.Inject
+import com.duckduckgo.app.browser.SpecialUrlDetector.UrlType
+import timber.log.Timber
+import java.net.URISyntaxException
 
-
-class SpecialUrlDetector @Inject constructor() {
+interface SpecialUrlDetector {
+    fun determineType(uri: Uri): UrlType
+    fun determineType(uriString: String?): UrlType
 
     sealed class UrlType {
         class Web(val webAddress: String) : UrlType()
         class Telephone(val telephoneNumber: String) : UrlType()
         class Email(val emailAddress: String) : UrlType()
         class Sms(val telephoneNumber: String) : UrlType()
+        class IntentType(val url: String, val intent: Intent, val fallbackUrl: String?) : UrlType()
+        class SearchQuery(val query: String) : UrlType()
+        class Unknown(val url: String) : UrlType()
     }
 
-    fun determineType(uri: Uri): UrlType {
+}
+
+class SpecialUrlDetectorImpl : SpecialUrlDetector {
+
+    override fun determineType(uri: Uri): UrlType {
         val uriString = uri.toString()
 
-        return when (uri.scheme) {
+        return when (val scheme = uri.scheme) {
             TEL_SCHEME -> buildTelephone(uriString)
             TELPROMPT_SCHEME -> buildTelephonePrompt(uriString)
             MAILTO_SCHEME -> buildEmail(uriString)
             SMS_SCHEME -> buildSms(uriString)
             SMSTO_SCHEME -> buildSmsTo(uriString)
-            else -> UrlType.Web(uriString)
+            HTTP_SCHEME, HTTPS_SCHEME, DATA_SCHEME -> UrlType.Web(uriString)
+            ABOUT_SCHEME -> UrlType.Unknown(uriString)
+            JAVASCRIPT_SCHEME -> UrlType.SearchQuery(uriString)
+            null -> UrlType.SearchQuery(uriString)
+            else -> checkForIntent(scheme, uriString)
         }
     }
 
-    private fun buildTelephone(uriString: String) =
-            UrlType.Telephone(uriString.removePrefix("$TEL_SCHEME:"))
+    private fun buildTelephone(uriString: String): UrlType = UrlType.Telephone(uriString.removePrefix("$TEL_SCHEME:").truncate(PHONE_MAX_LENGTH))
 
     private fun buildTelephonePrompt(uriString: String): UrlType =
-            UrlType.Telephone(uriString.removePrefix("$TELPROMPT_SCHEME:"))
+        UrlType.Telephone(uriString.removePrefix("$TELPROMPT_SCHEME:").truncate(PHONE_MAX_LENGTH))
 
-    private fun buildEmail(uriString: String): UrlType {
-        return UrlType.Email(uriString)
+    private fun buildEmail(uriString: String): UrlType = UrlType.Email(uriString.truncate(EMAIL_MAX_LENGTH))
+
+    private fun buildSms(uriString: String): UrlType = UrlType.Sms(uriString.removePrefix("$SMS_SCHEME:").truncate(SMS_MAX_LENGTH))
+
+    private fun buildSmsTo(uriString: String): UrlType = UrlType.Sms(uriString.removePrefix("$SMSTO_SCHEME:").truncate(SMS_MAX_LENGTH))
+
+    private fun checkForIntent(scheme: String, uriString: String): UrlType {
+        val validUriSchemeRegex = Regex("[a-z][a-zA-Z\\d+.-]+")
+        if (scheme.matches(validUriSchemeRegex)) {
+            return buildIntent(uriString)
+        }
+
+        return UrlType.SearchQuery(uriString)
     }
 
-    private fun buildSms(uriString: String) =
-            UrlType.Sms(uriString.removePrefix("$SMS_SCHEME:"))
+    private fun buildIntent(uriString: String): UrlType {
+        return try {
+            val intent = Intent.parseUri(uriString, 0)
+            val fallbackUrl = intent.getStringExtra(EXTRA_FALLBACK_URL)
+            UrlType.IntentType(url = uriString, intent = intent, fallbackUrl = fallbackUrl)
+        } catch (e: URISyntaxException) {
+            Timber.w(e, "Failed to parse uri $uriString")
+            return UrlType.Unknown(uriString)
+        }
+    }
 
-    private fun buildSmsTo(uriString: String) =
-            UrlType.Sms(uriString.removePrefix("$SMSTO_SCHEME:"))
-
-    fun determineType(uriString: String?): UrlType {
+    override fun determineType(uriString: String?): UrlType {
         if (uriString == null) return UrlType.Web("")
 
         return determineType(Uri.parse(uriString))
     }
+
+    private fun String.truncate(maxLength: Int): String = if (this.length > maxLength) this.substring(0, maxLength) else this
 
     companion object {
         private const val TEL_SCHEME = "tel"
@@ -70,5 +102,14 @@ class SpecialUrlDetector @Inject constructor() {
         private const val MAILTO_SCHEME = "mailto"
         private const val SMS_SCHEME = "sms"
         private const val SMSTO_SCHEME = "smsto"
+        private const val HTTP_SCHEME = "http"
+        private const val HTTPS_SCHEME = "https"
+        private const val ABOUT_SCHEME = "about"
+        private const val DATA_SCHEME = "data"
+        private const val JAVASCRIPT_SCHEME = "javascript"
+        private const val EXTRA_FALLBACK_URL = "browser_fallback_url"
+        const val SMS_MAX_LENGTH = 400
+        const val PHONE_MAX_LENGTH = 20
+        const val EMAIL_MAX_LENGTH = 1000
     }
 }

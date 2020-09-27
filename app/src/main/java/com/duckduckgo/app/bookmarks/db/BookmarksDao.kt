@@ -16,14 +16,15 @@
 
 package com.duckduckgo.app.bookmarks.db
 
-import android.arch.lifecycle.LiveData
-import android.arch.persistence.room.*
+import androidx.lifecycle.LiveData
+import androidx.room.*
+import io.reactivex.Single
 
 @Dao
 interface BookmarksDao {
 
     @Insert
-    fun insert(bookmark: BookmarkEntity)
+    fun insert(bookmark: BookmarkEntity): Long
 
     @Query("select * from bookmarks")
     fun bookmarks(): LiveData<List<BookmarkEntity>>
@@ -31,7 +32,12 @@ interface BookmarksDao {
     @Delete
     fun delete(bookmark: BookmarkEntity)
 
-    @Update
+    @Update(onConflict = OnConflictStrategy.REPLACE)
     fun update(bookmarkEntity: BookmarkEntity)
 
+    @Query("select * from bookmarks WHERE title LIKE :query OR url LIKE :query ")
+    fun bookmarksByQuery(query: String): Single<List<BookmarkEntity>>
+
+    @Query("select CAST(COUNT(*) AS BIT) from bookmarks")
+    suspend fun hasBookmarks(): Boolean
 }

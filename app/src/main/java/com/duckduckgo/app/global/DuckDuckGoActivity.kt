@@ -16,17 +16,47 @@
 
 package com.duckduckgo.app.global
 
+import android.annotation.SuppressLint
+import android.content.BroadcastReceiver
 import android.os.Bundle
-import android.support.v7.app.AppCompatActivity
 import android.view.MenuItem
+import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.Toolbar
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
+import com.duckduckgo.app.browser.R
+import com.duckduckgo.app.settings.db.SettingsDataStore
 import dagger.android.AndroidInjection
-
+import javax.inject.Inject
 
 abstract class DuckDuckGoActivity : AppCompatActivity() {
 
+    @Inject
+    lateinit var viewModelFactory: ViewModelFactory
+
+    @Inject
+    lateinit var settingsDataStore: SettingsDataStore
+
+    private var themeChangeReceiver: BroadcastReceiver? = null
+
+    @SuppressLint("MissingSuperCall")
     override fun onCreate(savedInstanceState: Bundle?) {
-        AndroidInjection.inject(this)
+        onCreate(savedInstanceState, true)
+    }
+
+    /**
+     * We need to conditionally defer the Dagger initialization in certain places.
+     * So if this method is called from an Activity with daggerInject=false, you'll probably need to call daggerInject() directly.
+     */
+    fun onCreate(savedInstanceState: Bundle?, daggerInject: Boolean = true) {
+        if (daggerInject) daggerInject()
+        themeChangeReceiver = applyTheme()
         super.onCreate(savedInstanceState)
+    }
+
+    protected fun daggerInject() {
+        AndroidInjection.inject(this)
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
@@ -38,4 +68,20 @@ abstract class DuckDuckGoActivity : AppCompatActivity() {
         }
         return super.onOptionsItemSelected(item)
     }
+
+    override fun onDestroy() {
+        themeChangeReceiver?.let {
+            LocalBroadcastManager.getInstance(applicationContext).unregisterReceiver(it)
+        }
+        super.onDestroy()
+    }
+
+    fun setupToolbar(toolbar: Toolbar) {
+        setSupportActionBar(toolbar)
+        supportActionBar?.setDisplayHomeAsUpEnabled(true)
+        toolbar.setNavigationIcon(R.drawable.ic_back)
+    }
+
+    protected inline fun <reified V : ViewModel> bindViewModel() = lazy { ViewModelProvider(this, viewModelFactory).get(V::class.java) }
+
 }

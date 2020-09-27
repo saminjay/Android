@@ -19,8 +19,13 @@ import android.net.Uri
 import android.net.Uri.parse
 import com.duckduckgo.app.global.UrlScheme.Companion.http
 
+val IP_REGEX = Regex("^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(:[0-9]+)?$")
+
 fun Uri.withScheme(): Uri {
-    if (scheme == null) {
+    // Uri.parse function falsely parses IP:PORT string.
+    // For example if input is "255.255.255.255:9999", it falsely flags 255.255.255.255 as the scheme.
+    // Therefore in the withScheme method, we need to parse it after manually inserting "http".
+    if (scheme == null || scheme!!.matches(IP_REGEX)) {
         return parse("$http://${toString()}")
     }
 
@@ -35,13 +40,53 @@ val Uri.baseHost: String?
     get() = withScheme().host?.removePrefix("www.")
 
 val Uri.isHttp: Boolean
-    get() = scheme?.equals(UrlScheme.http, true) ?: false
+    get() = scheme?.equals(http, true) ?: false
 
 val Uri.isHttps: Boolean
     get() = scheme?.equals(UrlScheme.https, true) ?: false
 
+val Uri.toHttps: Uri
+    get() = buildUpon().scheme(UrlScheme.https).build()
+
 val Uri.hasIpHost: Boolean
     get() {
-        val ipRegex = Regex("^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$")
-        return baseHost?.matches(ipRegex) ?: false
+        return baseHost?.matches(IP_REGEX) ?: false
     }
+
+val Uri.absoluteString: String
+    get() {
+        return "$scheme://$host$path"
+    }
+
+fun Uri.isHttpsVersionOfUri(other: Uri): Boolean {
+    return isHttps && other.isHttp && other.toHttps == this
+}
+
+private val MOBILE_URL_PREFIXES = listOf("m.", "mobile.")
+
+val Uri.isMobileSite: Boolean
+    get() {
+        val auth = authority ?: return false
+        return MOBILE_URL_PREFIXES.firstOrNull { auth.startsWith(it) } != null
+    }
+
+fun Uri.toDesktopUri(): Uri {
+    if (!isMobileSite) return this
+
+    val newUrl = MOBILE_URL_PREFIXES.fold(toString()) { url, prefix ->
+        url.replaceFirst(prefix, "")
+    }
+
+    return parse(newUrl)
+}
+
+// to obtain a favicon for a website, we go directly to the site and look for /favicon.ico
+private const val faviconBaseUrlFormat = "%s://%s/favicon.ico"
+
+fun Uri?.faviconLocation(): Uri? {
+    if (this == null) return null
+    val host = this.host
+    if (host.isNullOrBlank()) return null
+    val isHttps = this.isHttps
+    return parse(String.format(faviconBaseUrlFormat, if (isHttps) "https" else "http", host))
+}

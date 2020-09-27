@@ -16,580 +16,415 @@
 
 package com.duckduckgo.app.browser
 
-import android.Manifest.permission.WRITE_EXTERNAL_STORAGE
 import android.annotation.SuppressLint
-import android.app.DownloadManager
-import android.app.DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
-import android.arch.lifecycle.Observer
-import android.arch.lifecycle.ViewModelProviders
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.net.Uri
+import android.content.Intent.EXTRA_TEXT
 import android.os.Bundle
-import android.os.Environment
-import android.support.design.widget.Snackbar
-import android.support.v4.app.ActivityCompat
-import android.support.v4.content.ContextCompat
-import android.support.v7.widget.LinearLayoutManager
-import android.text.Editable
-import android.view.*
-import android.view.KeyEvent.KEYCODE_ENTER
-import android.view.ViewGroup.LayoutParams.MATCH_PARENT
-import android.view.inputmethod.EditorInfo.IME_ACTION_DONE
-import android.webkit.CookieManager
-import android.webkit.URLUtil
-import android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-import android.webkit.WebView
-import android.widget.TextView
+import android.os.Message
 import android.widget.Toast
-import com.duckduckgo.app.bookmarks.ui.BookmarkAddEditDialogFragment
-import com.duckduckgo.app.bookmarks.ui.BookmarkAddEditDialogFragment.BookmarkDialogCreationListener
+import androidx.fragment.app.DialogFragment
+import androidx.lifecycle.Observer
 import com.duckduckgo.app.bookmarks.ui.BookmarksActivity
 import com.duckduckgo.app.browser.BrowserViewModel.Command
-import com.duckduckgo.app.browser.autoComplete.BrowserAutoCompleteSuggestionsAdapter
-import com.duckduckgo.app.browser.omnibar.OnBackKeyListener
+import com.duckduckgo.app.browser.BrowserViewModel.Command.Query
+import com.duckduckgo.app.browser.BrowserViewModel.Command.Refresh
+import com.duckduckgo.app.browser.rating.ui.AppEnjoymentDialogFragment
+import com.duckduckgo.app.browser.rating.ui.GiveFeedbackDialogFragment
+import com.duckduckgo.app.browser.rating.ui.RateAppDialogFragment
+import com.duckduckgo.app.browser.shortcut.ShortcutBuilder
+import com.duckduckgo.app.cta.ui.CtaViewModel
+import com.duckduckgo.app.feedback.ui.common.FeedbackActivity
+import com.duckduckgo.app.fire.DataClearer
+import com.duckduckgo.app.fire.DataClearerForegroundAppRestartPixel
+import com.duckduckgo.app.fire.FireAnimationLoader
+import com.duckduckgo.app.global.ApplicationClearDataState
 import com.duckduckgo.app.global.DuckDuckGoActivity
-import com.duckduckgo.app.global.ViewModelFactory
+import com.duckduckgo.app.global.intentText
 import com.duckduckgo.app.global.view.*
-import com.duckduckgo.app.privacymonitor.model.PrivacyGrade
-import com.duckduckgo.app.privacymonitor.renderer.icon
-import com.duckduckgo.app.privacymonitor.ui.PrivacyDashboardActivity
+import com.duckduckgo.app.location.ui.LocationPermissionsActivity
+import com.duckduckgo.app.onboarding.ui.page.DefaultBrowserPage
+import com.duckduckgo.app.playstore.PlayStoreUtils
+import com.duckduckgo.app.privacy.ui.PrivacyDashboardActivity
 import com.duckduckgo.app.settings.SettingsActivity
+import com.duckduckgo.app.statistics.VariantManager
+import com.duckduckgo.app.statistics.pixels.Pixel
+import com.duckduckgo.app.tabs.model.TabEntity
 import kotlinx.android.synthetic.main.activity_browser.*
-import kotlinx.android.synthetic.main.popup_window_browser_menu.view.*
-import org.jetbrains.anko.doAsync
-import org.jetbrains.anko.toast
-import org.jetbrains.anko.uiThread
+import kotlinx.coroutines.*
+import org.jetbrains.anko.longToast
 import timber.log.Timber
 import javax.inject.Inject
-import javax.inject.Provider
 
-
-class BrowserActivity : DuckDuckGoActivity(), BookmarkDialogCreationListener {
+class BrowserActivity : DuckDuckGoActivity(), CoroutineScope by MainScope() {
 
     @Inject
-    lateinit var webViewClient: BrowserWebViewClient
+    lateinit var clearPersonalDataAction: ClearPersonalDataAction
 
     @Inject
-    lateinit var webChromeClient: BrowserChromeClient
+    lateinit var dataClearer: DataClearer
 
     @Inject
-    lateinit var viewModelFactory: ViewModelFactory
+    lateinit var pixel: Pixel
 
     @Inject
-    lateinit var cookieManagerProvider: Provider<CookieManager>
+    lateinit var playStoreUtils: PlayStoreUtils
 
-    private lateinit var popupMenu: BrowserPopupMenu
+    @Inject
+    lateinit var dataClearerForegroundAppRestartPixel: DataClearerForegroundAppRestartPixel
 
-    private lateinit var autoCompleteSuggestionsAdapter: BrowserAutoCompleteSuggestionsAdapter
+    @Inject
+    lateinit var ctaViewModel: CtaViewModel
 
-    private var acceptingRenderUpdates = true
+    @Inject
+    lateinit var variantManager: VariantManager
 
-    private val viewModel: BrowserViewModel by lazy {
-        ViewModelProviders.of(this, viewModelFactory).get(BrowserViewModel::class.java)
+    @Inject
+    lateinit var fireAnimationLoader: FireAnimationLoader
+
+    private var currentTab: BrowserTabFragment? = null
+
+    private val viewModel: BrowserViewModel by bindViewModel()
+
+    private var instanceStateBundles: CombinedInstanceState? = null
+
+    private var lastIntent: Intent? = null
+
+    private var currentAppEnjoymentFragment: DialogFragment? = null
+
+    private lateinit var renderer: BrowserStateRenderer
+
+    private var openMessageInNewTabJob: Job? = null
+
+    @SuppressLint("MissingSuperCall")
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.daggerInject()
+        Timber.i("onCreate called. freshAppLaunch: ${dataClearer.isFreshAppLaunch}, savedInstanceState: $savedInstanceState")
+        dataClearerForegroundAppRestartPixel.registerIntent(intent)
+        renderer = BrowserStateRenderer()
+        val newInstanceState = if (dataClearer.isFreshAppLaunch) null else savedInstanceState
+        instanceStateBundles = CombinedInstanceState(originalInstanceState = savedInstanceState, newInstanceState = newInstanceState)
+
+        super.onCreate(savedInstanceState = newInstanceState, daggerInject = false)
+        setContentView(R.layout.activity_browser)
+        viewModel.viewState.observe(this, Observer {
+            renderer.renderBrowserViewState(it)
+        })
+        viewModel.awaitClearDataFinishedNotification()
     }
 
-    private val privacyGradeMenu: MenuItem?
-        get() = toolbar.menu.findItem(R.id.privacy_dashboard_menu_item)
+    override fun onStop() {
+        openMessageInNewTabJob?.cancel()
+        super.onStop()
+    }
 
-    private val fireMenu: MenuItem?
-        get() = toolbar.menu.findItem(R.id.fire_menu_item)
+    override fun onDestroy() {
+        currentTab = null
+        super.onDestroy()
+    }
 
-    // Used to represent a file to download, but might first require permission requesting
-    private var pendingFileDownload: PendingFileDownload? = null
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        Timber.i("onNewIntent: $intent")
+        dataClearerForegroundAppRestartPixel.registerIntent(intent)
 
-    private lateinit var webView: WebView
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-
-        setContentView(R.layout.activity_browser)
-
-        createPopupMenu()
-        configureObservers()
-        configureToolbar()
-        configureWebView()
-        configureOmnibarTextInput()
-        configureDummyViewTouchHandler()
-        configureAutoComplete()
-
-        if (savedInstanceState == null) {
-            consumeSharedQuery()
+        if (dataClearer.dataClearerState.value == ApplicationClearDataState.FINISHED) {
+            Timber.i("Automatic data clearer has finished, so processing intent now")
+            launchNewSearchOrQuery(intent)
+        } else {
+            Timber.i("Automatic data clearer not yet finished, so deferring processing of intent")
+            lastIntent = intent
         }
     }
 
-    private fun createPopupMenu() {
-        popupMenu = BrowserPopupMenu(layoutInflater)
-        val view = popupMenu.contentView
-        popupMenu.apply {
-            enableMenuOption(view.forwardPopupMenuItem) { webView.goForward() }
-            enableMenuOption(view.backPopupMenuItem) { webView.goBack() }
-            enableMenuOption(view.refreshPopupMenuItem) { webView.reload() }
-            enableMenuOption(view.bookmarksPopupMenuItem) { launchBookmarks() }
-            enableMenuOption(view.addBookmarksPopupMenuItem) { addBookmark() }
-            enableMenuOption(view.settingsPopupMenuItem) { launchSettings() }
+    private fun openNewTab(tabId: String, url: String? = null, skipHome: Boolean): BrowserTabFragment {
+        Timber.i("Opening new tab, url: $url, tabId: $tabId")
+        val fragment = BrowserTabFragment.newInstance(tabId, url, skipHome)
+        val transaction = supportFragmentManager.beginTransaction()
+        val tab = currentTab
+        if (tab == null) {
+            transaction.replace(R.id.fragmentContainer, fragment, tabId)
+        } else {
+            transaction.hide(tab)
+            transaction.add(R.id.fragmentContainer, fragment, tabId)
+        }
+        transaction.commit()
+        currentTab = fragment
+        return fragment
+    }
+
+    private fun selectTab(tab: TabEntity?) {
+        Timber.v("Select tab: $tab")
+
+        if (tab == null) return
+
+        if (tab.tabId == currentTab?.tabId) return
+
+        val fragment = supportFragmentManager.findFragmentByTag(tab.tabId) as? BrowserTabFragment
+        if (fragment == null) {
+            openNewTab(tab.tabId, tab.url, tab.skipHome)
+            return
+        }
+        val transaction = supportFragmentManager.beginTransaction()
+        currentTab?.let {
+            transaction.hide(it)
+        }
+        transaction.show(fragment)
+        transaction.commit()
+        currentTab = fragment
+    }
+
+    private fun removeTabs(fragments: List<BrowserTabFragment>) {
+        val transaction = supportFragmentManager.beginTransaction()
+        fragments.forEach { transaction.remove(it) }
+        transaction.commit()
+    }
+
+    private fun launchNewSearchOrQuery(intent: Intent?) {
+
+        Timber.i("launchNewSearchOrQuery: $intent")
+
+        if (intent == null) {
+            return
+        }
+
+        if (intent.getBooleanExtra(LAUNCH_FROM_DEFAULT_BROWSER_DIALOG, false)) {
+            setResult(DefaultBrowserPage.DEFAULT_BROWSER_RESULT_CODE_DIALOG_INTERNAL)
+            finish()
+            return
+        }
+
+        if (intent.getBooleanExtra(PERFORM_FIRE_ON_ENTRY_EXTRA, false)) {
+
+            Timber.i("Clearing everything as a result of $PERFORM_FIRE_ON_ENTRY_EXTRA flag being set")
+            GlobalScope.launch {
+                clearPersonalDataAction.clearTabsAndAllDataAsync(appInForeground = true, shouldFireDataClearPixel = true)
+                clearPersonalDataAction.setAppUsedSinceLastClearFlag(false)
+                clearPersonalDataAction.killAndRestartProcess()
+            }
+
+            return
+        }
+
+        if (intent.getBooleanExtra(LAUNCHED_FROM_FIRE_EXTRA, false)) {
+            Timber.i("Launched from fire")
+            Toast.makeText(applicationContext, R.string.fireDataCleared, Toast.LENGTH_LONG).show()
+        }
+
+        if (launchNewSearch(intent)) {
+            Timber.w("new tab requested")
+            launch { viewModel.onNewTabRequested() }
+            return
+        }
+
+        val sharedText = intent.intentText
+        if (sharedText != null) {
+            if (intent.getBooleanExtra(ShortcutBuilder.SHORTCUT_EXTRA_ARG, false)) {
+                Timber.d("Shortcut opened with url $sharedText")
+                launch { viewModel.onOpenShortcut(sharedText) }
+            } else {
+                Timber.w("opening in new tab requested for $sharedText")
+                launch { viewModel.onOpenInNewTabRequested(query = sharedText, skipHome = true) }
+                return
+            }
         }
     }
 
     private fun configureObservers() {
-        viewModel.viewState.observe(this, Observer<BrowserViewModel.ViewState> {
-            it?.let { render(it) }
-        })
-
-        viewModel.url.observe(this, Observer {
-            it?.let { webView.loadUrl(it) }
-        })
-
+        lifecycle.addObserver(fireAnimationLoader)
         viewModel.command.observe(this, Observer {
             processCommand(it)
         })
-    }
-
-    private fun processCommand(it: Command?) {
-        when (it) {
-            Command.Refresh -> webView.reload()
-            is Command.Navigate -> {
-                focusDummy.requestFocus()
-                webView.loadUrl(it.url)
-            }
-            Command.LandingPage -> finishActivityAnimated()
-            is Command.DialNumber -> {
-                val intent = Intent(Intent.ACTION_DIAL)
-                intent.data = Uri.parse("tel:${it.telephoneNumber}")
-                launchExternalActivity(intent)
-            }
-            is Command.SendEmail -> {
-                val intent = Intent(Intent.ACTION_SENDTO)
-                intent.data = Uri.parse(it.emailAddress)
-                launchExternalActivity(intent)
-            }
-            is Command.SendSms -> {
-                val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${it.telephoneNumber}"))
-                startActivity(intent)
-            }
-            Command.ShowKeyboard -> {
-                omnibarTextInput.postDelayed({ omnibarTextInput.showKeyboard() }, 300)
-            }
-            Command.HideKeyboard -> {
-                omnibarTextInput.hideKeyboard()
-                focusDummy.requestFocus()
-            }
-            Command.ReinitialiseWebView -> {
-                webView.clearHistory()
-            }
-            is Command.ShowFullScreen -> {
-                webViewFullScreenContainer.addView(it.view, ViewGroup.LayoutParams(MATCH_PARENT, MATCH_PARENT))
-            }
-            is Command.DownloadImage -> {
-                pendingFileDownload = PendingFileDownload(it.url, Environment.DIRECTORY_PICTURES)
-                downloadFileWithPermissionCheck()
-            }
-        }
-    }
-
-    private fun configureAutoComplete() {
-        autoCompleteSuggestionsList.layoutManager = LinearLayoutManager(this)
-        autoCompleteSuggestionsAdapter = BrowserAutoCompleteSuggestionsAdapter(
-                immediateSearchClickListener = {
-                    userEnteredQuery(it.phrase)
-                },
-                editableSearchClickListener = {
-                    viewModel.onUserSelectedToEditQuery(it.phrase)
-                }
-        )
-        autoCompleteSuggestionsList.adapter = autoCompleteSuggestionsAdapter
-    }
-
-    private fun consumeSharedQuery() {
-        val sharedText = intent.getStringExtra(QUERY_EXTRA)
-        if (sharedText != null) {
-            viewModel.onSharedTextReceived(sharedText)
-        }
-    }
-
-    private fun render(viewState: BrowserViewModel.ViewState) {
-
-        Timber.v("Rendering view state: $viewState")
-
-        if (!acceptingRenderUpdates) return
-
-        when (viewState.browserShowing) {
-            true -> webView.show()
-            false -> webView.hide()
-        }
-
-        when (viewState.isLoading) {
-            true -> pageLoadingIndicator.show()
-            false -> pageLoadingIndicator.hide()
-        }
-
-        if (shouldUpdateOmnibarTextInput(viewState, viewState.omnibarText)) {
-            omnibarTextInput.setText(viewState.omnibarText)
-
-            // ensures caret sits at the end of the query
-            omnibarTextInput.post { omnibarTextInput.setSelection(omnibarTextInput.text.length) }
-            appBarLayout.setExpanded(true, true)
-        }
-
-        pageLoadingIndicator.progress = viewState.progress
-
-        when (viewState.showClearButton) {
-            true -> showClearButton()
-            false -> hideClearButton()
-        }
-
-        privacyGradeMenu?.isVisible = viewState.showPrivacyGrade
-        fireMenu?.isVisible = viewState.showFireButton
-        popupMenu.contentView.backPopupMenuItem.isEnabled = viewState.browserShowing && webView.canGoBack()
-        popupMenu.contentView.forwardPopupMenuItem.isEnabled = viewState.browserShowing && webView.canGoForward()
-        popupMenu.contentView.refreshPopupMenuItem.isEnabled = viewState.browserShowing
-        popupMenu.contentView.addBookmarksPopupMenuItem?.isEnabled = viewState.canAddBookmarks
-
-        when (viewState.showAutoCompleteSuggestions) {
-            false -> autoCompleteSuggestionsList.gone()
-            true -> {
-                autoCompleteSuggestionsList.show()
-                val results = viewState.autoCompleteSearchResults.suggestions
-                autoCompleteSuggestionsAdapter.updateData(results)
-            }
-        }
-
-        val immersiveMode = isImmersiveModeEnabled()
-        when (viewState.isFullScreen) {
-            true -> if (!immersiveMode) goFullScreen()
-            false -> if (immersiveMode) exitFullScreen()
-        }
-    }
-
-    private fun goFullScreen() {
-        Timber.i("Entering full screen")
-
-        webViewFullScreenContainer.show()
-
-        toggleFullScreen()
-    }
-
-    private fun exitFullScreen() {
-        Timber.i("Exiting full screen")
-
-        webViewFullScreenContainer.removeAllViews()
-        webViewFullScreenContainer.gone()
-
-        this.toggleFullScreen()
-    }
-
-    private fun showClearButton() {
-        omnibarTextInput.post {
-            clearOmnibarInputButton.show()
-            omnibarTextInput.updatePadding(paddingEnd = 40.toPx())
-        }
-    }
-
-    private fun hideClearButton() {
-        omnibarTextInput.post {
-            clearOmnibarInputButton.hide()
-            omnibarTextInput.updatePadding(paddingEnd = 10.toPx())
-        }
-    }
-
-    private fun shouldUpdateOmnibarTextInput(viewState: BrowserViewModel.ViewState, omnibarInput: String?) =
-            viewState.omnibarText != null && !viewState.isEditing && omnibarTextInput.isDifferent(omnibarInput)
-
-    private fun configureToolbar() {
-        setSupportActionBar(toolbar)
-        supportActionBar?.let {
-            it.title = null
-        }
-    }
-
-    private fun configureOmnibarTextInput() {
-        omnibarTextInput.onFocusChangeListener =
-                View.OnFocusChangeListener { _, hasFocus: Boolean ->
-                    viewModel.onOmnibarInputStateChanged(omnibarTextInput.text.toString(), hasFocus)
-                }
-
-        omnibarTextInput.addTextChangedListener(object : TextChangedWatcher() {
-
-            override fun afterTextChanged(editable: Editable) {
-                viewModel.onOmnibarInputStateChanged(
-                        omnibarTextInput.text.toString(),
-                        omnibarTextInput.hasFocus()
-                )
-            }
+        viewModel.selectedTab.observe(this, Observer {
+            if (it != null) selectTab(it)
         })
-
-        omnibarTextInput.onBackKeyListener = object : OnBackKeyListener {
-            override fun onBackKey(): Boolean {
-                focusDummy.requestFocus()
-                return viewModel.userDismissedKeyboard()
-            }
-        }
-
-        omnibarTextInput.setOnEditorActionListener(TextView.OnEditorActionListener { _, actionId, keyEvent ->
-            if (actionId == IME_ACTION_DONE || keyEvent?.keyCode == KEYCODE_ENTER) {
-                userEnteredQuery(omnibarTextInput.text.toString())
-                return@OnEditorActionListener true
-            }
-            false
+        viewModel.tabs.observe(this, Observer {
+            clearStaleTabs(it)
+            launch { viewModel.onTabsUpdated(it) }
         })
-
-        clearOmnibarInputButton.setOnClickListener { omnibarTextInput.setText("") }
     }
 
-    private fun userEnteredQuery(query: String) {
-        viewModel.onUserSubmittedQuery(query)
+    private fun removeObservers() {
+        viewModel.command.removeObservers(this)
+        viewModel.selectedTab.removeObservers(this)
+        viewModel.tabs.removeObservers(this)
     }
 
-    @SuppressLint("SetJavaScriptEnabled")
-    private fun configureWebView() {
-        webView = layoutInflater.inflate(R.layout.include_duckduckgo_browser_webview, webViewContainer, true).findViewById(R.id.browserWebView) as WebView
-        webView.webViewClient = webViewClient
-        webView.webChromeClient = webChromeClient
-
-        webView.settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            loadWithOverviewMode = true
-            useWideViewPort = true
-            builtInZoomControls = true
-            displayZoomControls = false
-            mixedContentMode = MIXED_CONTENT_COMPATIBILITY_MODE
-            setSupportZoom(true)
+    private fun clearStaleTabs(updatedTabs: List<TabEntity>?) {
+        if (updatedTabs == null) {
+            return
         }
 
-        webView.setDownloadListener { url, _, _, _, _ ->
-            pendingFileDownload = PendingFileDownload(url, Environment.DIRECTORY_DOWNLOADS)
+        val stale = supportFragmentManager
+            .fragments.mapNotNull { it as? BrowserTabFragment }
+            .filter { fragment -> updatedTabs.none { it.tabId == fragment.tabId } }
 
-           downloadFileWithPermissionCheck()
-        }
-
-        webView.setOnTouchListener { _, _ ->
-            if (omnibarTextInput.isFocused) {
-                focusDummy.requestFocus()
-            }
-            false
-        }
-
-        registerForContextMenu(webView)
-
-        viewModel.registerWebViewListener(webViewClient, webChromeClient)
-    }
-
-    private fun downloadFileWithPermissionCheck() {
-        if (hasWriteStoragePermission()) {
-            downloadFile()
-        } else {
-            requestStoragePermission()
+        if (stale.isNotEmpty()) {
+            removeTabs(stale)
         }
     }
 
-    private fun downloadFile() {
-        val pending = pendingFileDownload
-        pending?.let {
-            val uri = Uri.parse(pending.url)
-            val guessedFileName = URLUtil.guessFileName(pending.url, null, null)
-            Timber.i("Guessed filename of $guessedFileName for url ${pending.url}")
-            val request = DownloadManager.Request(uri).apply {
-                allowScanningByMediaScanner()
-                setDestinationInExternalPublicDir(pending.directory, guessedFileName)
-                setNotificationVisibility(VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            }
-            val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-            manager.enqueue(request)
-            pendingFileDownload = null
-            Toast.makeText(applicationContext, getString(R.string.webviewDownload), Toast.LENGTH_LONG).show()
+    private fun processCommand(command: Command?) {
+        Timber.i("Processing command: $command")
+        when (command) {
+            is Query -> currentTab?.submitQuery(command.query)
+            is Refresh -> currentTab?.onRefreshRequested()
+            is Command.DisplayMessage -> applicationContext?.longToast(command.messageId)
+            is Command.LaunchPlayStore -> launchPlayStore()
+            is Command.ShowAppEnjoymentPrompt -> showAppEnjoymentPrompt(AppEnjoymentDialogFragment.create(command.promptCount, viewModel))
+            is Command.ShowAppRatingPrompt -> showAppEnjoymentPrompt(RateAppDialogFragment.create(command.promptCount, viewModel))
+            is Command.ShowAppFeedbackPrompt -> showAppEnjoymentPrompt(GiveFeedbackDialogFragment.create(command.promptCount, viewModel))
+            is Command.LaunchFeedbackView -> startActivity(FeedbackActivity.intent(this))
         }
     }
 
-    private fun hasWriteStoragePermission(): Boolean {
-        return ContextCompat.checkSelfPermission(this, WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+    private fun launchNewSearch(intent: Intent): Boolean {
+        return intent.getBooleanExtra(NEW_SEARCH_EXTRA, false)
     }
 
-    private fun requestStoragePermission() {
-        ActivityCompat.requestPermissions(this, arrayOf(WRITE_EXTERNAL_STORAGE), PERMISSION_REQUEST_EXTERNAL_STORAGE)
-    }
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        when(requestCode) {
-            PERMISSION_REQUEST_EXTERNAL_STORAGE -> {
-                if((grantResults.isNotEmpty()) && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                    Timber.i("Permission granted")
-                    downloadFile()
-                } else {
-                    Timber.i("Permission refused")
-                    Snackbar.make(toolbar, R.string.permissionRequiredToDownload, Snackbar.LENGTH_LONG).show()
-                }
-            }
+    fun launchPrivacyDashboard() {
+        currentTab?.tabId?.let {
+            startActivityForResult(PrivacyDashboardActivity.intent(this, it), DASHBOARD_REQUEST_CODE)
         }
     }
 
-    override fun onSaveInstanceState(bundle: Bundle) {
-        webView.saveState(bundle)
-        super.onSaveInstanceState(bundle)
+    fun launchFire() {
+        pixel.fire(Pixel.PixelName.FORGET_ALL_PRESSED_BROWSING)
+        val dialog = FireDialog(context = this, clearPersonalDataAction = clearPersonalDataAction, ctaViewModel = ctaViewModel, variantManager = variantManager)
+        dialog.clearStarted = {
+            removeObservers()
+        }
+        dialog.clearComplete = { viewModel.onClearComplete() }
+        dialog.setOnShowListener { currentTab?.onFireDialogVisibilityChanged(isVisible = true) }
+        dialog.setOnCancelListener { currentTab?.onFireDialogVisibilityChanged(isVisible = false) }
+        dialog.show()
     }
 
-    override fun onRestoreInstanceState(bundle: Bundle) {
-        super.onRestoreInstanceState(bundle)
-        webView.restoreState(bundle)
+    fun launchNewTab() {
+        launch { viewModel.onNewTabRequested() }
     }
 
-    override fun onCreateContextMenu(menu: ContextMenu, view: View, menuInfo: ContextMenu.ContextMenuInfo?) {
-        webView.hitTestResult?.let {
-            viewModel.userLongPressedInWebView(it, menu)
+    fun openInNewTab(query: String, sourceTabId: String?) {
+        launch {
+            viewModel.onOpenInNewTabRequested(query = query, sourceTabId = sourceTabId)
         }
     }
 
-    override fun onContextItemSelected(item: MenuItem): Boolean {
-        webView.hitTestResult?.let {
-            val url = it.extra
-            if (viewModel.userSelectedItemFromLongPressMenu(url, item)) {
-                return true
-            }
-        }
-
-        return super.onContextItemSelected(item)
-    }
-
-    /**
-     * Dummy view captures touches on areas outside of the toolbar, before the WebView is visible
-     */
-    private fun configureDummyViewTouchHandler() {
-        focusDummy.setOnTouchListener { _, _ ->
-            finishActivityAnimated()
-            true
+    fun openMessageInNewTab(message: Message, sourceTabId: String?) {
+        openMessageInNewTabJob = launch {
+            val tabId = viewModel.onNewTabRequested(sourceTabId = sourceTabId)
+            val fragment = openNewTab(tabId, null, false)
+            fragment.messageFromPreviousTab = message
         }
     }
 
-    override fun onCreateOptionsMenu(menu: Menu?): Boolean {
-        menuInflater.inflate(R.menu.menu_browser_activity, menu)
-        viewModel.privacyGrade.observe(this, Observer<PrivacyGrade> {
-            it?.let {
-                privacyGradeMenu?.icon = getDrawable(it.icon())
-            }
-        })
-        return true
-    }
-
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        when (item.itemId) {
-            R.id.privacy_dashboard_menu_item -> {
-                launchPrivacyDashboard()
-                return true
-            }
-            R.id.fire_menu_item -> {
-                launchFire()
-                return true
-            }
-            R.id.browser_popup_menu_item -> {
-                launchPopupMenu()
-            }
-        }
-        return false
-    }
-
-    private fun launchPrivacyDashboard() {
-        startActivityForResult(PrivacyDashboardActivity.intent(this), DASHBOARD_REQUEST_CODE)
-    }
-
-    private fun launchFire() {
-        FireDialog(context = this,
-                clearStarted = { finishActivityAnimated() },
-                clearComplete = { applicationContext.toast(R.string.fireDataCleared) },
-                cookieManager = cookieManagerProvider.get()
-        ).show()
-    }
-
-    private fun launchPopupMenu() {
-        popupMenu.show(rootView, toolbar)
-    }
-
-    private fun addBookmark() {
-
-        val addBookmarkDialog = BookmarkAddEditDialogFragment.createDialogCreationMode(
-                existingTitle = webView.title,
-                existingUrl = webView.url
-        )
-
-        addBookmarkDialog.show(supportFragmentManager, ADD_BOOKMARK_FRAGMENT_TAG)
-    }
-
-    private fun launchSettings() {
+    fun launchSettings() {
         startActivity(SettingsActivity.intent(this))
     }
 
-    private fun launchBookmarks() {
+    fun launchLocationSettings() {
+        startActivity(LocationPermissionsActivity.intent(this))
+    }
+
+    fun launchBookmarks() {
         startActivity(BookmarksActivity.intent(this))
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (requestCode == DASHBOARD_REQUEST_CODE) {
             viewModel.receivedDashboardResult(resultCode)
+        } else {
+            super.onActivityResult(requestCode, resultCode, data)
         }
     }
 
     override fun onBackPressed() {
-        if (webView.canGoBack()) {
-            webView.goBack()
-            return
+        if (currentTab?.onBackPressed() != true) {
+            super.onBackPressed()
         }
-        clearViewPriorToAnimation()
-        super.onBackPressed()
     }
 
-    private fun finishActivityAnimated() {
-        clearViewPriorToAnimation()
-        supportFinishAfterTransition()
+    companion object {
+
+        fun intent(
+            context: Context,
+            queryExtra: String? = null,
+            newSearch: Boolean = false,
+            launchedFromFireAction: Boolean = false
+        ): Intent {
+            val intent = Intent(context, BrowserActivity::class.java)
+            intent.putExtra(EXTRA_TEXT, queryExtra)
+            intent.putExtra(NEW_SEARCH_EXTRA, newSearch)
+            intent.putExtra(LAUNCHED_FROM_FIRE_EXTRA, launchedFromFireAction)
+            return intent
+        }
+
+        const val NEW_SEARCH_EXTRA = "NEW_SEARCH_EXTRA"
+        const val PERFORM_FIRE_ON_ENTRY_EXTRA = "PERFORM_FIRE_ON_ENTRY_EXTRA"
+        const val LAUNCHED_FROM_FIRE_EXTRA = "LAUNCHED_FROM_FIRE_EXTRA"
+        const val LAUNCH_FROM_DEFAULT_BROWSER_DIALOG = "LAUNCH_FROM_DEFAULT_BROWSER_DIALOG"
+
+        private const val APP_ENJOYMENT_DIALOG_TAG = "AppEnjoyment"
+
+        private const val DASHBOARD_REQUEST_CODE = 100
     }
 
-    private fun clearViewPriorToAnimation() {
-        acceptingRenderUpdates = false
-        privacyGradeMenu?.isVisible = false
-        omnibarTextInput.text.clear()
-        omnibarTextInput.hideKeyboard()
-        webView.hide()
-    }
+    inner class BrowserStateRenderer {
 
-    override fun onDestroy() {
-        webViewContainer.removeAllViews()
-        webView.destroy()
+        private var lastSeenBrowserState: BrowserViewModel.ViewState? = null
+        private var processedOriginalIntent = false
 
-        popupMenu.dismiss()
-        super.onDestroy()
-    }
+        fun renderBrowserViewState(viewState: BrowserViewModel.ViewState) {
+            renderIfChanged(viewState, lastSeenBrowserState) {
+                lastSeenBrowserState = viewState
 
-    override fun userWantsToCreateBookmark(title: String, url: String) {
-        doAsync {
-            viewModel.addBookmark(title, url)
-            uiThread {
-                toast(R.string.bookmarkAddedFeedback)
+                if (viewState.hideWebContent) {
+                    hideWebContent()
+                } else {
+                    showWebContent()
+                }
+            }
+        }
+
+        private fun showWebContent() {
+            Timber.d("BrowserActivity can now start displaying web content. instance state is $instanceStateBundles")
+            configureObservers()
+            clearingInProgressView.gone()
+
+            if (lastIntent != null) {
+                Timber.i("There was a deferred intent to process; handling now")
+                launchNewSearchOrQuery(lastIntent)
+                lastIntent = null
+                return
+            }
+
+            if (!processedOriginalIntent && instanceStateBundles?.originalInstanceState == null && !intent.launchedFromRecents) {
+                Timber.i("Original instance state is null, so will inspect intent for actions to take. $intent")
+                launchNewSearchOrQuery(intent)
+                processedOriginalIntent = true
             }
         }
     }
 
-    private data class PendingFileDownload(
-            val url: String,
-            val directory: String
-        )
+    private val Intent.launchedFromRecents: Boolean
+        get() = (flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) == Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY
 
-    companion object {
-
-        fun intent(context: Context, queryExtra: String? = null): Intent {
-            val intent = Intent(context, BrowserActivity::class.java)
-            intent.putExtra(QUERY_EXTRA, queryExtra)
-            return intent
-        }
-
-        private const val ADD_BOOKMARK_FRAGMENT_TAG = "ADD_BOOKMARK"
-        private const val QUERY_EXTRA = "QUERY_EXTRA"
-        private const val DASHBOARD_REQUEST_CODE = 100
-        private const val PERMISSION_REQUEST_EXTERNAL_STORAGE = 200
-
-
+    private fun showAppEnjoymentPrompt(prompt: DialogFragment) {
+        currentAppEnjoymentFragment?.dismiss()
+        prompt.show(supportFragmentManager, APP_ENJOYMENT_DIALOG_TAG)
+        currentAppEnjoymentFragment = prompt
     }
+
+    private fun hideWebContent() {
+        Timber.d("Hiding web view content")
+        removeObservers()
+        clearingInProgressView.show()
+    }
+
+    private fun launchPlayStore() {
+        playStoreUtils.launchPlayStore()
+    }
+
+    private data class CombinedInstanceState(val originalInstanceState: Bundle?, val newInstanceState: Bundle?)
 
 }

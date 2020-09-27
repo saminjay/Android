@@ -17,9 +17,9 @@
 package com.duckduckgo.app.global
 
 import android.net.Uri
+import androidx.core.net.toUri
 import org.junit.Assert.*
 import org.junit.Test
-
 
 class UriExtensionTest {
 
@@ -87,6 +87,34 @@ class UriExtensionTest {
     }
 
     @Test
+    fun whenUriIsHttpsAndOtherIsHttpButOtherwiseIdenticalThenIsHttpsVersionOfOtherIsTrue() {
+        val uri = Uri.parse("https://example.com")
+        val other = Uri.parse("http://example.com")
+        assertTrue(uri.isHttpsVersionOfUri(other))
+    }
+
+    @Test
+    fun whenUriIsHttpsAndOtherIsHttpButNotOtherwiseIdenticalThenIsHttpsVersionOfOtherIsFalse() {
+        val uri = Uri.parse("https://example.com")
+        val other = Uri.parse("http://example.com/path")
+        assertFalse(uri.isHttpsVersionOfUri(other))
+    }
+
+    @Test
+    fun whenUriIsHttpThenIsHttpsVersionOfOtherIsFalse() {
+        val uri = Uri.parse("http://example.com")
+        val other = Uri.parse("http://example.com")
+        assertFalse(uri.isHttpsVersionOfUri(other))
+    }
+
+    @Test
+    fun whenUriIsHttpsAndOtherIsHttpsThenIsHttpsVersionOfOtherIsFalse() {
+        val uri = Uri.parse("https://example.com")
+        val other = Uri.parse("https://example.com")
+        assertFalse(uri.isHttpsVersionOfUri(other))
+    }
+
+    @Test
     fun whenUriIsMalformedThenIsHtpsIsFalse() {
         assertFalse(Uri.parse("[example com]").isHttps)
     }
@@ -98,8 +126,102 @@ class UriExtensionTest {
     }
 
     @Test
+    fun whenIpWithPortUriThenHasIpHostIsTrue() {
+        assertTrue(Uri.parse("https://54.229.105.203:999/something").hasIpHost)
+        assertTrue(Uri.parse("54.229.105.203:999/something").hasIpHost)
+    }
+
+    @Test
+    fun whenIpWithPortUriThenPortNumberParsedSuccessfully() {
+        assertEquals(999, Uri.parse("https://54.229.105.203:999/something").port)
+    }
+
+    @Test
+    fun whenValidIpAddressWithPortParsedWithSchemeThenPortNumberParsedSuccessfully() {
+        assertEquals(999, Uri.parse("121.33.2.11:999").withScheme().port)
+    }
+
+    @Test
     fun whenStandardUriThenHasIpHostIsFalse() {
         assertFalse(Uri.parse("http://example.com").hasIpHost)
     }
 
+    @Test
+    fun whenUrlStartsMDotThenIdentifiedAsMobileSite() {
+        assertTrue(Uri.parse("https://m.example.com").isMobileSite)
+    }
+
+    @Test
+    fun whenUrlStartsMobileDotThenIdentifiedAsMobileSite() {
+        assertTrue(Uri.parse("https://mobile.example.com").isMobileSite)
+    }
+
+    @Test
+    fun whenUrlSubdomainEndsWithMThenNotIdentifiedAsMobileSite() {
+        assertFalse(Uri.parse("https://adam.example.com").isMobileSite)
+    }
+
+    @Test
+    fun whenUrlDoesNotStartWithMDotThenNotIdentifiedAsMobileSite() {
+        assertFalse(Uri.parse("https://example.com").isMobileSite)
+    }
+
+    @Test
+    fun whenConvertingMobileSiteToDesktopSiteThenShortMobilePrefixStripped() {
+        val converted = Uri.parse("https://m.example.com").toDesktopUri()
+        assertEquals("https://example.com", converted.toString())
+    }
+
+    @Test
+    fun whenConvertingMobileSiteToDesktopSiteThenLongMobilePrefixStripped() {
+        val converted = Uri.parse("https://mobile.example.com").toDesktopUri()
+        assertEquals("https://example.com", converted.toString())
+    }
+
+    @Test
+    fun whenConvertingMobileSiteToDesktopSiteThenMultipleMobilePrefixesStripped() {
+        val converted = Uri.parse("https://mobile.m.example.com").toDesktopUri()
+        assertEquals("https://example.com", converted.toString())
+    }
+
+    @Test
+    fun whenConvertingDesktopSiteToDesktopSiteThenUrlUnchanged() {
+        val converted = Uri.parse("https://example.com").toDesktopUri()
+        assertEquals("https://example.com", converted.toString())
+    }
+
+    @Test
+    fun whenGettingAbsoluteStringThenDoNotReturnQueryParameters() {
+        val absoluteString = Uri.parse("https://example.com/test?q=example/#1/anotherrandomcode").absoluteString
+        assertEquals("https://example.com/test", absoluteString)
+    }
+
+    @Test
+    fun whenNullUrlThenNullFaviconUrl() {
+        assertNull("".toUri().faviconLocation())
+    }
+
+    @Test
+    fun whenHttpRequestThenFaviconLocationAlsoHttp() {
+        val favicon = "http://example.com".toUri().faviconLocation()
+        assertTrue(favicon!!.isHttp)
+    }
+
+    @Test
+    fun whenHttpsRequestThenFaviconLocationAlsoHttps() {
+        val favicon = "https://example.com".toUri().faviconLocation()
+        assertTrue(favicon!!.isHttps)
+    }
+
+    @Test
+    fun whenUrlContainsASubdomainThenSubdomainReturnedInFavicon() {
+        val favicon = "https://sub.example.com".toUri().faviconLocation()
+        assertEquals("https://sub.example.com/favicon.ico", favicon.toString())
+    }
+
+    @Test
+    fun whenUrlIsIpAddressThenIpReturnedInFaviconUrl() {
+        val favicon = "https://192.168.1.0".toUri().faviconLocation()
+        assertEquals("https://192.168.1.0/favicon.ico", favicon.toString())
+    }
 }

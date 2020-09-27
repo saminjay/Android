@@ -16,22 +16,22 @@
 
 package com.duckduckgo.app.trackerdetection
 
+import androidx.core.net.toUri
 import com.duckduckgo.app.global.UriString.Companion.sameOrSubdomain
-import com.duckduckgo.app.privacymonitor.store.PrivacySettingsStore
-import com.duckduckgo.app.trackerdetection.model.ResourceType
-import com.duckduckgo.app.trackerdetection.model.TrackerNetworks
+import com.duckduckgo.app.privacy.db.UserWhitelistDao
 import com.duckduckgo.app.trackerdetection.model.TrackingEvent
 import timber.log.Timber
 import java.util.concurrent.CopyOnWriteArrayList
 
 interface TrackerDetector {
     fun addClient(client: Client)
-    fun evaluate(url: String, documentUrl: String, resourceType: ResourceType): TrackingEvent?
+    fun evaluate(url: String, documentUrl: String): TrackingEvent?
 }
 
-class TrackerDetectorImpl (
-        private val networkTrackers: TrackerNetworks,
-        private val settings: PrivacySettingsStore) :TrackerDetector {
+class TrackerDetectorImpl(
+    private val entityLookup: EntityLookup,
+    private val userWhitelistDao: UserWhitelistDao
+) : TrackerDetector {
 
     private val clients = CopyOnWriteArrayList<Client>()
 
@@ -43,10 +43,9 @@ class TrackerDetectorImpl (
         clients.add(client)
     }
 
-    override fun evaluate(url: String, documentUrl: String, resourceType: ResourceType): TrackingEvent? {
+    override fun evaluate(url: String, documentUrl: String): TrackingEvent? {
 
-        val whitelisted = clients.any { it.name.type == Client.ClientType.WHITELIST && it.matches(url, documentUrl, resourceType) }
-        if (whitelisted) {
+        if (whitelisted(url, documentUrl)) {
             Timber.v("$documentUrl resource $url is whitelisted")
             return null
         }
@@ -56,22 +55,40 @@ class TrackerDetectorImpl (
             return null
         }
 
-        val matches = clients.any { it.name.type == Client.ClientType.BLOCKING && it.matches(url, documentUrl, resourceType) }
-        if (matches) {
+        val result = clients
+            .filter { it.name.type == Client.ClientType.BLOCKING }
+            .mapNotNull { it.matches(url, documentUrl) }
+            .firstOrNull { it.matches }
+
+        if (result != null) {
             Timber.v("$documentUrl resource $url WAS identified as a tracker")
-            return TrackingEvent(documentUrl, url, networkTrackers.network(url), settings.privacyOn)
+            val entity = if (result.entityName != null) entityLookup.entityForName(result.entityName) else null
+            return TrackingEvent(documentUrl, url, result.categories, entity, !userWhitelistDao.isDocumentWhitelisted(documentUrl))
         }
 
         Timber.v("$documentUrl resource $url was not identified as a tracker")
         return null
     }
 
+    private fun whitelisted(url: String, documentUrl: String): Boolean {
+        return clients.any { it.name.type == Client.ClientType.WHITELIST && it.matches(url, documentUrl).matches }
+    }
+
     private fun firstParty(firstUrl: String, secondUrl: String): Boolean =
-            sameOrSubdomain(firstUrl, secondUrl) || sameOrSubdomain(secondUrl, firstUrl) || sameNetworkName(firstUrl, secondUrl)
+        sameOrSubdomain(firstUrl, secondUrl) || sameOrSubdomain(secondUrl, firstUrl) || sameNetworkName(firstUrl, secondUrl)
 
-    private fun sameNetworkName(firstUrl: String, secondUrl: String): Boolean =
-            networkTrackers.network(firstUrl) != null && networkTrackers.network(firstUrl)?.name == networkTrackers.network(secondUrl)?.name
-
+    private fun sameNetworkName(firstUrl: String, secondUrl: String): Boolean {
+        val firstNetwork = entityLookup.entityForUrl(firstUrl) ?: return false
+        val secondNetwork = entityLookup.entityForUrl(secondUrl) ?: return false
+        return firstNetwork.name == secondNetwork.name
+    }
 
     val clientCount get() = clients.count()
+}
+
+private fun UserWhitelistDao.isDocumentWhitelisted(document: String?): Boolean {
+    document?.toUri()?.host?.let {
+        return contains(it)
+    }
+    return false
 }

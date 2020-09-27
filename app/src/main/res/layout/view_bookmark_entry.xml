@@ -14,32 +14,52 @@
   ~ limitations under the License.
   -->
 
-<android.support.constraint.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:paddingTop="14dp"
+    android:paddingBottom="14dp"
+    android:paddingStart="16dp"
+    android:paddingEnd="16dp"
     android:background="?android:attr/selectableItemBackground"
     android:clickable="true"
-    android:focusable="true"
-    android:layout_marginTop="6dp"
-    android:layout_marginBottom="4dp"
->
+    android:focusable="true">
+
+    <FrameLayout
+        android:id="@+id/favicon_container"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:background="@drawable/subtle_favicon_background"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <ImageView
+            android:id="@+id/favicon"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:layout_gravity="center"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_globe_gray_16dp" />
+    </FrameLayout>
 
     <TextView
         android:id="@+id/title"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
         android:fontFamily="sans-serif"
-        android:layout_marginStart="22dp"
-        android:textColor="@color/white"
-        android:paddingTop="4dp"
+        android:textColor="?attr/normalTextColor"
         android:textSize="16sp"
         android:textStyle="normal"
+        android:maxLines="1"
+        android:singleLine="true"
+        android:ellipsize="end"
         app:layout_constraintBottom_toTopOf="@+id/url"
         app:layout_constraintEnd_toStartOf="@+id/overflowMenu"
-        app:layout_constraintHorizontal_bias="0.5"
-        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintStart_toEndOf="@id/favicon_container"
         app:layout_constraintTop_toTopOf="parent"
         tools:text="Bookmark" />
 
@@ -48,15 +68,14 @@
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:fontFamily="sans-serif"
-        android:layout_marginStart="22dp"
         android:paddingTop="2dp"
         android:paddingBottom="4dp"
-        android:textColor="@color/warmGray"
-        android:textSize="12sp"
+        android:textColor="?attr/bookmarkSubtitleTextColor"
+        android:textSize="14sp"
         android:textStyle="normal"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toStartOf="@+id/overflowMenu"
-        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintStart_toStartOf="@id/title"
         app:layout_constraintTop_toBottomOf="@id/title"
         tools:text="Bookmark" />
 
@@ -64,16 +83,15 @@
         android:id="@+id/overflowMenu"
         android:layout_width="wrap_content"
         android:layout_height="0dp"
-        android:scaleType="center"
-        android:paddingEnd="14dp"
+        android:background="?selectableItemBackground"
         android:paddingStart="14dp"
-        android:background="?android:attr/selectableItemBackground"
-        android:src="@drawable/ic_overflow_24px"
+        android:paddingEnd="14dp"
+        android:scaleType="center"
+        android:src="@drawable/ic_overflow"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintVertical_bias="0.5"
         tools:ignore="ContentDescription" />
 
-
-</android.support.constraint.ConstraintLayout>
+</androidx.constraintlayout.widget.ConstraintLayout>

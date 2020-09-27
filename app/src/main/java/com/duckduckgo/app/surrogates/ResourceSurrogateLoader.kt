@@ -16,7 +16,7 @@
 
 package com.duckduckgo.app.surrogates
 
-import android.support.annotation.WorkerThread
+import androidx.annotation.WorkerThread
 import com.duckduckgo.app.surrogates.store.ResourceSurrogateDataStore
 import timber.log.Timber
 import java.io.ByteArrayInputStream
@@ -24,8 +24,8 @@ import javax.inject.Inject
 
 @WorkerThread
 class ResourceSurrogateLoader @Inject constructor(
-        private val resourceSurrogates: ResourceSurrogates,
-        private val surrogatesDataStore: ResourceSurrogateDataStore
+    private val resourceSurrogates: ResourceSurrogates,
+    private val surrogatesDataStore: ResourceSurrogateDataStore
 ) {
 
     fun loadData() {
@@ -46,13 +46,7 @@ class ResourceSurrogateLoader @Inject constructor(
 
     private fun parse(bytes: ByteArray): List<SurrogateResponse> {
         val surrogates = mutableListOf<SurrogateResponse>()
-
-        val reader = ByteArrayInputStream(bytes).bufferedReader()
-        val existingLines = reader.readLines().toMutableList()
-
-        if (existingLines.isNotEmpty() && existingLines.last().isNotBlank()) {
-            existingLines.add("")
-        }
+        val existingLines = readExistingLines(bytes)
 
         var nextLineIsNewRule = true
 
@@ -79,11 +73,11 @@ class ResourceSurrogateLoader @Inject constructor(
 
             if (it.isBlank()) {
                 surrogates.add(
-                        SurrogateResponse(
-                                name = ruleName,
-                                mimeType = mimeType,
-                                jsFunction = functionBuilder.toString()
-                        )
+                    SurrogateResponse(
+                        name = ruleName,
+                        mimeType = mimeType,
+                        jsFunction = functionBuilder.toString()
+                    )
                 )
 
                 functionBuilder.setLength(0)
@@ -98,5 +92,16 @@ class ResourceSurrogateLoader @Inject constructor(
 
         Timber.d("Processed ${surrogates.size} surrogates")
         return surrogates
+    }
+
+    private fun readExistingLines(bytes: ByteArray): List<String> {
+        val existingLines = ByteArrayInputStream(bytes).bufferedReader().use { reader ->
+            reader.readLines().toMutableList()
+        }
+
+        if (existingLines.isNotEmpty() && existingLines.last().isNotBlank()) {
+            existingLines.add("")
+        }
+        return existingLines
     }
 }

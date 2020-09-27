@@ -16,12 +16,24 @@
 
 package com.duckduckgo.app.di
 
+import com.duckduckgo.app.fire.UnsentForgetAllPixelStore
+import com.duckduckgo.app.fire.UnsentForgetAllPixelStoreSharedPreferences
+import com.duckduckgo.app.global.install.AppInstallSharedPreferences
+import com.duckduckgo.app.global.install.AppInstallStore
+import com.duckduckgo.app.global.events.db.AppUserEventsStore
+import com.duckduckgo.app.global.events.db.UserEventsStore
+import com.duckduckgo.app.onboarding.store.AppUserStageStore
 import com.duckduckgo.app.onboarding.store.OnboardingSharedPreferences
 import com.duckduckgo.app.onboarding.store.OnboardingStore
-import com.duckduckgo.app.privacymonitor.store.PrivacySettingsSharedPreferences
-import com.duckduckgo.app.privacymonitor.store.PrivacySettingsStore
-import com.duckduckgo.app.privacymonitor.store.TermsOfServiceRawStore
-import com.duckduckgo.app.privacymonitor.store.TermsOfServiceStore
+import com.duckduckgo.app.onboarding.store.UserStageStore
+import com.duckduckgo.app.privacy.store.TermsOfServiceRawStore
+import com.duckduckgo.app.privacy.store.TermsOfServiceStore
+import com.duckduckgo.app.statistics.store.OfflinePixelCountDataStore
+import com.duckduckgo.app.statistics.store.OfflinePixelCountSharedPreferences
+import com.duckduckgo.app.statistics.store.StatisticsDataStore
+import com.duckduckgo.app.statistics.store.StatisticsSharedPreferences
+import com.duckduckgo.app.tabs.model.TabDataRepository
+import com.duckduckgo.app.tabs.model.TabRepository
 import dagger.Binds
 import dagger.Module
 
@@ -29,12 +41,29 @@ import dagger.Module
 abstract class StoreModule {
 
     @Binds
-    abstract fun bindsOnboardingStore(onboardingStore: OnboardingSharedPreferences): OnboardingStore
+    abstract fun bindStatisticsStore(statisticsStore: StatisticsSharedPreferences): StatisticsDataStore
 
     @Binds
-    abstract fun bindPrivacySettingsStore(privacySettingsStore: PrivacySettingsSharedPreferences): PrivacySettingsStore
+    abstract fun bindOnboardingStore(onboardingStore: OnboardingSharedPreferences): OnboardingStore
 
     @Binds
     abstract fun bindTermsOfServiceStore(termsOfServiceStore: TermsOfServiceRawStore): TermsOfServiceStore
 
+    @Binds
+    abstract fun bindTabReposistory(tabRepository: TabDataRepository): TabRepository
+
+    @Binds
+    abstract fun bindAppInstallStore(store: AppInstallSharedPreferences): AppInstallStore
+
+    @Binds
+    abstract fun bindDataClearingStore(store: UnsentForgetAllPixelStoreSharedPreferences): UnsentForgetAllPixelStore
+
+    @Binds
+    abstract fun bindOfflinePixelDataStore(store: OfflinePixelCountSharedPreferences): OfflinePixelCountDataStore
+
+    @Binds
+    abstract fun bindUserStageStore(userStageStore: AppUserStageStore): UserStageStore
+
+    @Binds
+    abstract fun bindUserEventsStore(userEventsStore: AppUserEventsStore): UserEventsStore
 }

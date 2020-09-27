@@ -16,7 +16,7 @@
 
 package com.duckduckgo.app.surrogates
 
-import android.support.test.InstrumentationRegistry
+import androidx.test.platform.app.InstrumentationRegistry
 import com.duckduckgo.app.surrogates.store.ResourceSurrogateDataStore
 import org.junit.Assert
 import org.junit.Assert.assertEquals
@@ -32,7 +32,7 @@ class ResourceSurrogateLoaderTest {
     @Before
     fun setup() {
         resourceSurrogates = ResourceSurrogatesImpl()
-        dataStore = ResourceSurrogateDataStore(InstrumentationRegistry.getTargetContext())
+        dataStore = ResourceSurrogateDataStore(InstrumentationRegistry.getInstrumentation().targetContext)
         testee = ResourceSurrogateLoader(resourceSurrogates, dataStore)
     }
 
@@ -105,12 +105,12 @@ class ResourceSurrogateLoaderTest {
         assertEquals(6, surrogates.size)
     }
 
-    private fun initialiseFile(filename: String) : List<SurrogateResponse> {
+    private fun initialiseFile(filename: String): List<SurrogateResponse> {
         return testee.convertBytes(readFile(filename))
     }
 
     private fun readFile(filename: String): ByteArray {
-        return javaClass.classLoader.getResource("binary/surrogates/$filename").readBytes()
+        return javaClass.classLoader!!.getResource("binary/surrogates/$filename").readBytes()
     }
 
 }

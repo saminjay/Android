@@ -14,41 +14,47 @@
  * limitations under the License.
  */
 
+@file:Suppress("RemoveExplicitTypeArguments")
+
 package com.duckduckgo.app.browser
 
 import android.net.Uri
-import android.support.test.InstrumentationRegistry
-import android.support.test.annotation.UiThreadTest
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
+import androidx.test.annotation.UiThreadTest
+import com.duckduckgo.app.CoroutineTestRule
+import com.duckduckgo.app.httpsupgrade.HttpsUpgrader
+import com.duckduckgo.app.privacy.db.PrivacyProtectionCountDao
 import com.duckduckgo.app.surrogates.ResourceSurrogates
 import com.duckduckgo.app.surrogates.SurrogateResponse
-import com.duckduckgo.app.httpsupgrade.HttpsUpgrader
 import com.duckduckgo.app.trackerdetection.TrackerDetector
 import com.duckduckgo.app.trackerdetection.model.TrackingEvent
-import com.nhaarman.mockito_kotlin.*
+import com.nhaarman.mockitokotlin2.*
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.mockito.ArgumentMatchers.anyString
-import org.mockito.Mock
 import org.mockito.MockitoAnnotations
 
 class WebViewRequestInterceptorTest {
 
+    @ExperimentalCoroutinesApi
+    @get:Rule
+    var coroutinesTestRule = CoroutineTestRule()
+
     private lateinit var testee: WebViewRequestInterceptor
 
-    @Mock
-    private lateinit var mockTrackerDetector: TrackerDetector
-    @Mock
-    private lateinit var mockHttpsUpgrader: HttpsUpgrader
-    @Mock
-    private lateinit var mockResourceSurrogates: ResourceSurrogates
-    @Mock
-    private lateinit var mockRequest: WebResourceRequest
+    private var mockTrackerDetector: TrackerDetector = mock()
+    private var mockHttpsUpgrader: HttpsUpgrader = mock()
+    private var mockResourceSurrogates: ResourceSurrogates = mock()
+    private var mockRequest: WebResourceRequest = mock()
+    private val mockPrivacyProtectionCountDao: PrivacyProtectionCountDao = mock()
 
-    private lateinit var webView: WebView
+    private var webView: WebView = mock()
 
     @UiThreadTest
     @Before
@@ -56,226 +62,275 @@ class WebViewRequestInterceptorTest {
         MockitoAnnotations.initMocks(this)
 
         testee = WebViewRequestInterceptor(
-                trackerDetector = mockTrackerDetector,
-                httpsUpgrader = mockHttpsUpgrader,
-                resourceSurrogates = mockResourceSurrogates
+            trackerDetector = mockTrackerDetector,
+            httpsUpgrader = mockHttpsUpgrader,
+            resourceSurrogates = mockResourceSurrogates,
+            privacyProtectionCountDao = mockPrivacyProtectionCountDao
         )
-
-        val context = InstrumentationRegistry.getTargetContext()
-
-        webView = WebView(context)
     }
 
     @Test
-    fun whenUrlShouldBeUpgradedThenUpgraderInvoked() {
+    fun whenUrlShouldBeUpgradedThenUpgraderInvoked() = runBlocking<Unit> {
         configureShouldUpgrade()
         testee.shouldIntercept(
-                request = mockRequest,
-                currentUrl = null,
-                webView = webView,
-                webViewClientListener = null)
+            request = mockRequest,
+            documentUrl = null,
+            webView = webView,
+            webViewClientListener = null
+        )
 
         verify(mockHttpsUpgrader).upgrade(any())
     }
 
     @Test
-    fun whenUrlShouldBeUpgradedThenCancelledResponseReturned() {
+    fun whenUrlShouldBeUpgradedThenCancelledResponseReturned() = runBlocking<Unit> {
         configureShouldUpgrade()
         val response = testee.shouldIntercept(
-                request = mockRequest,
-                currentUrl = null,
-                webView = webView,
-                webViewClientListener = null)
+            request = mockRequest,
+            documentUrl = null,
+            webView = webView,
+            webViewClientListener = null
+        )
 
         assertCancelledResponse(response)
     }
 
     @Test
-    fun whenUrlShouldBeUpgradedButNotOnMainFrameThenNotUpgraded() {
+    fun whenUrlShouldBeUpgradedButNotOnMainFrameThenNotUpgraded() = runBlocking<Unit> {
         configureShouldUpgrade()
         whenever(mockRequest.isForMainFrame).thenReturn(false)
         testee.shouldIntercept(
-                request = mockRequest,
-                currentUrl = null,
-                webView = webView,
-                webViewClientListener = null)
+            request = mockRequest,
+            documentUrl = null,
+            webView = webView,
+            webViewClientListener = null
+        )
 
         verify(mockHttpsUpgrader, never()).upgrade(any())
     }
 
     @Test
-    fun whenUrlShouldBeUpgradedButUrlIsNullThenNotUpgraded() {
+    fun whenUrlShouldBeUpgradedButUrlIsNullThenNotUpgraded() = runBlocking<Unit> {
         configureShouldUpgrade()
         whenever(mockRequest.url).thenReturn(null)
         testee.shouldIntercept(
-                request = mockRequest,
-                currentUrl = null,
-                webView = webView,
-                webViewClientListener = null)
+            request = mockRequest,
+            documentUrl = null,
+            webView = webView,
+            webViewClientListener = null
+        )
 
         verify(mockHttpsUpgrader, never()).upgrade(any())
     }
 
     @Test
-    fun whenUrlShouldNotBeUpgradedThenUpgraderNotInvoked() {
+    fun whenUrlShouldNotBeUpgradedThenUpgraderNotInvoked() = runBlocking<Unit> {
         whenever(mockHttpsUpgrader.shouldUpgrade(any())).thenReturn(false)
         testee.shouldIntercept(
-                request = mockRequest,
-                currentUrl = null,
-                webView = webView,
-                webViewClientListener = null)
+            request = mockRequest,
+            documentUrl = null,
+            webView = webView,
+            webViewClientListener = null
+        )
 
         verify(mockHttpsUpgrader, never()).upgrade(any())
     }
 
     @Test
-    fun whenCurrentUrlIsNullThenShouldContinueToLoad() {
+    fun whenDocumentUrlIsNullThenShouldContinueToLoad() = runBlocking<Unit> {
         configureShouldNotUpgrade()
         val response = testee.shouldIntercept(
-                request = mockRequest,
-                currentUrl = null,
-                webView = webView,
-                webViewClientListener = null)
+            request = mockRequest,
+            documentUrl = null,
+            webView = webView,
+            webViewClientListener = null
+        )
         assertRequestCanContinueToLoad(response)
     }
 
     @Test
-    fun whenIsTrustedSite_DuckDuckGo_ThenShouldContinueToLoad() {
+    fun whenIsTrustedSite_DuckDuckGo_ThenShouldContinueToLoad() = runBlocking<Unit> {
         configureShouldNotUpgrade()
         val response = testee.shouldIntercept(
-                request = mockRequest,
-                currentUrl = "duckduckgo.com/a/b/c?q=123",
-                webView = webView,
-                webViewClientListener = null)
-
-        assertRequestCanContinueToLoad(response)
-    }
-
-    @Test
-    fun whenIsTrustedSite_DontTrack_ThenShouldContinueToLoad() {
-        configureShouldNotUpgrade()
-        val response = testee.shouldIntercept(
-                request = mockRequest,
-                currentUrl = "donttrack.us/a/b/c?q=123",
-                webView = webView,
-                webViewClientListener = null)
+            request = mockRequest,
+            documentUrl = "duckduckgo.com/a/b/c?q=123",
+            webView = webView,
+            webViewClientListener = null
+        )
 
         assertRequestCanContinueToLoad(response)
     }
 
     @Test
-    fun whenIsTrustedSite_SpreadPrivacy_ThenShouldContinueToLoad() {
+    fun whenIsTrustedSite_DontTrack_ThenShouldContinueToLoad() = runBlocking<Unit> {
         configureShouldNotUpgrade()
         val response = testee.shouldIntercept(
-                request = mockRequest,
-                currentUrl = "spreadprivacy.com/a/b/c?q=123",
-                webView = webView,
-                webViewClientListener = null)
+            request = mockRequest,
+            documentUrl = "donttrack.us/a/b/c?q=123",
+            webView = webView,
+            webViewClientListener = null
+        )
 
         assertRequestCanContinueToLoad(response)
     }
 
     @Test
-    fun whenIsTrustedSite_DuckDuckHack_ThenShouldContinueToLoad() {
+    fun whenIsTrustedSite_SpreadPrivacy_ThenShouldContinueToLoad() = runBlocking<Unit> {
         configureShouldNotUpgrade()
         val response = testee.shouldIntercept(
-                request = mockRequest,
-                currentUrl = "duckduckhack.com/a/b/c?q=123",
-                webView = webView,
-                webViewClientListener = null)
+            request = mockRequest,
+            documentUrl = "spreadprivacy.com/a/b/c?q=123",
+            webView = webView,
+            webViewClientListener = null
+        )
 
         assertRequestCanContinueToLoad(response)
     }
 
     @Test
-    fun whenIsTrustedSite_PrivateBrowsingMyths_ThenShouldContinueToLoad() {
+    fun whenIsTrustedSite_DuckDuckHack_ThenShouldContinueToLoad() = runBlocking<Unit> {
         configureShouldNotUpgrade()
         val response = testee.shouldIntercept(
-                request = mockRequest,
-                currentUrl = "privatebrowsingmyths.com/a/b/c?q=123",
-                webView = webView,
-                webViewClientListener = null)
+            request = mockRequest,
+            documentUrl = "duckduckhack.com/a/b/c?q=123",
+            webView = webView,
+            webViewClientListener = null
+        )
 
         assertRequestCanContinueToLoad(response)
     }
 
     @Test
-    fun whenIsTrustedSite_DuckDotCo_ThenShouldContinueToLoad() {
+    fun whenIsTrustedSite_PrivateBrowsingMyths_ThenShouldContinueToLoad() = runBlocking<Unit> {
         configureShouldNotUpgrade()
         val response = testee.shouldIntercept(
-                request = mockRequest,
-                currentUrl = "duck.co/a/b/c?q=123",
-                webView = webView,
-                webViewClientListener = null)
+            request = mockRequest,
+            documentUrl = "privatebrowsingmyths.com/a/b/c?q=123",
+            webView = webView,
+            webViewClientListener = null
+        )
 
         assertRequestCanContinueToLoad(response)
     }
 
     @Test
-    fun whenIsHttpRequestThenHttpRequestListenerCalled() {
+    fun whenIsTrustedSite_DuckDotCo_ThenShouldContinueToLoad() = runBlocking<Unit> {
+        configureShouldNotUpgrade()
+        val response = testee.shouldIntercept(
+            request = mockRequest,
+            documentUrl = "duck.co/a/b/c?q=123",
+            webView = webView,
+            webViewClientListener = null
+        )
+
+        assertRequestCanContinueToLoad(response)
+    }
+
+    @Test
+    fun whenIsHttpRequestThenHttpRequestListenerCalled() = runBlocking<Unit> {
         configureShouldNotUpgrade()
         whenever(mockRequest.url).thenReturn(Uri.parse("http://example.com"))
         val mockListener = mock<WebViewClientListener>()
 
         val response = testee.shouldIntercept(
-                request = mockRequest,
-                currentUrl = "foo.com",
-                webView = webView,
-                webViewClientListener = mockListener)
+            request = mockRequest,
+            documentUrl = "foo.com",
+            webView = webView,
+            webViewClientListener = mockListener
+        )
 
         verify(mockListener).pageHasHttpResources(anyString())
         assertRequestCanContinueToLoad(response)
     }
 
     @Test
-    fun whenIsHttpsRequestThenHttpRequestListenerNotCalled() {
+    fun whenIsHttpsRequestThenHttpRequestListenerNotCalled() = runBlocking<Unit> {
         configureShouldNotUpgrade()
         whenever(mockRequest.url).thenReturn(Uri.parse("https://example.com"))
         val mockListener = mock<WebViewClientListener>()
 
         val response = testee.shouldIntercept(
-                request = mockRequest,
-                currentUrl = "foo.com",
-                webView = webView,
-                webViewClientListener = mockListener)
+            request = mockRequest,
+            documentUrl = "foo.com",
+            webView = webView,
+            webViewClientListener = mockListener
+        )
 
         verify(mockListener, never()).pageHasHttpResources(anyString())
         assertRequestCanContinueToLoad(response)
     }
 
-
     @Test
-    fun whenRequestShouldBlockAndNoSurrogateThenCancellingResponseReturned() {
+    fun whenRequestShouldBlockAndNoSurrogateThenCancellingResponseReturned() = runBlocking<Unit> {
         whenever(mockResourceSurrogates.get(any())).thenReturn(SurrogateResponse(responseAvailable = false))
 
         configureShouldNotUpgrade()
         configureShouldBlock()
         val response = testee.shouldIntercept(
-                request = mockRequest,
-                currentUrl = "foo.com",
-                webView = webView,
-                webViewClientListener = null)
+            request = mockRequest,
+            documentUrl = "foo.com",
+            webView = webView,
+            webViewClientListener = null
+        )
 
         assertCancelledResponse(response)
     }
 
     @Test
-    fun whenRequestShouldBlockButThereIsASurrogateThen() {
+    fun whenRequestShouldBlockButThereIsASurrogateThen() = runBlocking<Unit> {
         val availableSurrogate = SurrogateResponse(
-                responseAvailable = true,
-                mimeType = "application/javascript",
-                jsFunction = "javascript replacement function goes here")
+            responseAvailable = true,
+            mimeType = "application/javascript",
+            jsFunction = "javascript replacement function goes here"
+        )
         whenever(mockResourceSurrogates.get(any())).thenReturn(availableSurrogate)
 
         configureShouldNotUpgrade()
         configureShouldBlock()
         val response = testee.shouldIntercept(
-                request = mockRequest,
-                currentUrl = "foo.com",
-                webView = webView,
-                webViewClientListener = null)
+            request = mockRequest,
+            documentUrl = "foo.com",
+            webView = webView,
+            webViewClientListener = null
+        )
 
         assertEquals(availableSurrogate.jsFunction.byteInputStream().read(), response!!.data.read())
+    }
+
+    @Test
+    fun whenRequestShouldBlockButThereIsASurrogateThenCallSurrogateDetected() = runBlocking<Unit> {
+        val availableSurrogate = SurrogateResponse(
+            responseAvailable = true,
+            mimeType = "application/javascript",
+            jsFunction = "javascript replacement function goes here"
+        )
+        val mockWebViewClientListener: WebViewClientListener = mock()
+        whenever(mockResourceSurrogates.get(any())).thenReturn(availableSurrogate)
+
+        configureShouldNotUpgrade()
+        configureShouldBlock()
+        testee.shouldIntercept(
+            request = mockRequest,
+            documentUrl = "foo.com",
+            webView = webView,
+            webViewClientListener = mockWebViewClientListener
+        )
+
+        verify(mockWebViewClientListener).surrogateDetected(availableSurrogate)
+    }
+
+    @Test
+    fun whenUrlShouldBeUpgradedThenNotifyWebViewClientListener() = runBlocking<Unit> {
+        configureShouldUpgrade()
+        val mockWebViewClientListener: WebViewClientListener = mock()
+        testee.shouldIntercept(
+            request = mockRequest,
+            documentUrl = null,
+            webView = webView,
+            webViewClientListener = mockWebViewClientListener
+        )
+
+        verify(mockWebViewClientListener).upgradedToHttps()
     }
 
     private fun assertRequestCanContinueToLoad(response: WebResourceResponse?) {
@@ -283,27 +338,33 @@ class WebViewRequestInterceptorTest {
     }
 
     private fun configureShouldBlock() {
-        val blockTrackingEvent = TrackingEvent(blocked = true,
-                documentUrl = "",
-                trackerUrl = "",
-                trackerNetwork = null)
+        val blockTrackingEvent = TrackingEvent(
+            blocked = true,
+            documentUrl = "",
+            trackerUrl = "",
+            entity = null,
+            categories = null
+        )
         whenever(mockRequest.isForMainFrame).thenReturn(false)
-        whenever(mockTrackerDetector.evaluate(any(), any(), any())).thenReturn(blockTrackingEvent)
+        whenever(mockTrackerDetector.evaluate(any(), any())).thenReturn(blockTrackingEvent)
     }
 
-    private fun configureShouldUpgrade() {
+    private fun configureShouldUpgrade() = runBlocking<Unit> {
         whenever(mockHttpsUpgrader.shouldUpgrade(any())).thenReturn(true)
+        whenever(mockHttpsUpgrader.upgrade(any())).thenReturn(validHttpsUri())
         whenever(mockRequest.url).thenReturn(validUri())
         whenever(mockRequest.isForMainFrame).thenReturn(true)
     }
 
-    private fun configureShouldNotUpgrade() {
+    private fun configureShouldNotUpgrade() = runBlocking<Unit> {
         whenever(mockHttpsUpgrader.shouldUpgrade(any())).thenReturn(false)
+
         whenever(mockRequest.url).thenReturn(validUri())
         whenever(mockRequest.isForMainFrame).thenReturn(true)
     }
 
     private fun validUri() = Uri.parse("example.com")
+    private fun validHttpsUri() = Uri.parse("https://example.com")
 
     private fun assertCancelledResponse(response: WebResourceResponse?) {
         assertNotNull(response)

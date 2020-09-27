@@ -16,13 +16,22 @@
 
 package com.duckduckgo.app.global.view
 
+import android.content.ActivityNotFoundException
+import android.content.Context
 import android.content.Intent
-import android.support.v7.app.AppCompatActivity
+import android.os.Build
+import android.os.Bundle
 import android.view.View
+import android.widget.Toast
+import androidx.annotation.RequiresApi
+import androidx.core.app.ActivityOptionsCompat
+import androidx.fragment.app.FragmentActivity
 import com.duckduckgo.app.browser.R
+import com.duckduckgo.app.browser.defaultbrowsing.DefaultBrowserSystemSettings
 import org.jetbrains.anko.toast
+import timber.log.Timber
 
-fun AppCompatActivity.launchExternalActivity(intent: Intent) {
+fun FragmentActivity.launchExternalActivity(intent: Intent) {
     if (intent.resolveActivity(packageManager) != null) {
         startActivity(intent)
     } else {
@@ -30,17 +39,34 @@ fun AppCompatActivity.launchExternalActivity(intent: Intent) {
     }
 }
 
-fun AppCompatActivity.toggleFullScreen() {
+@RequiresApi(Build.VERSION_CODES.N)
+fun Context.launchDefaultAppActivity() {
+    try {
+        val intent = DefaultBrowserSystemSettings.intent()
+        startActivity(intent)
+    } catch (e: ActivityNotFoundException) {
+        val errorMessage = getString(R.string.cannotLaunchDefaultAppSettings)
+        Timber.w(errorMessage)
+        Toast.makeText(this, errorMessage, Toast.LENGTH_SHORT).show()
+    }
+}
+
+fun Context.fadeTransitionConfig(): Bundle? {
+    val config = ActivityOptionsCompat.makeCustomAnimation(this, android.R.anim.fade_in, android.R.anim.fade_out)
+    return config.toBundle()
+}
+
+fun FragmentActivity.toggleFullScreen() {
 
     val newUiOptions = window.decorView.systemUiVisibility
-            .xor(android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION)
-            .xor(android.view.View.SYSTEM_UI_FLAG_FULLSCREEN)
-            .xor(android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)
+        .xor(View.SYSTEM_UI_FLAG_HIDE_NAVIGATION)
+        .xor(View.SYSTEM_UI_FLAG_FULLSCREEN)
+        .xor(View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY)
 
     window.decorView.systemUiVisibility = newUiOptions
 }
 
-fun AppCompatActivity.isImmersiveModeEnabled(): Boolean {
+fun FragmentActivity.isImmersiveModeEnabled(): Boolean {
     val uiOptions = window.decorView.systemUiVisibility
     return uiOptions or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY == uiOptions
 }

@@ -17,55 +17,126 @@
 package com.duckduckgo.app.httpsupgrade
 
 import android.net.Uri
-import android.support.annotation.WorkerThread
-import com.duckduckgo.app.global.UrlScheme
+import androidx.annotation.WorkerThread
+import com.duckduckgo.app.global.api.isCached
 import com.duckduckgo.app.global.isHttps
-import com.duckduckgo.app.httpsupgrade.db.HttpsUpgradeDomainDao
+import com.duckduckgo.app.global.sha1
+import com.duckduckgo.app.global.toHttps
+import com.duckduckgo.app.httpsupgrade.api.HttpsBloomFilterFactory
+import com.duckduckgo.app.httpsupgrade.api.HttpsUpgradeService
+import com.duckduckgo.app.httpsupgrade.db.HttpsWhitelistDao
+import com.duckduckgo.app.privacy.db.UserWhitelistDao
+import com.duckduckgo.app.statistics.pixels.Pixel
+import com.duckduckgo.app.statistics.pixels.Pixel.PixelName.*
 import timber.log.Timber
+import java.util.concurrent.locks.ReentrantLock
 
 interface HttpsUpgrader {
 
     @WorkerThread
-    fun shouldUpgrade(uri: Uri) : Boolean
+    fun shouldUpgrade(uri: Uri): Boolean
 
     fun upgrade(uri: Uri): Uri {
-        return uri.buildUpon().scheme(UrlScheme.https).build()
+        return uri.toHttps
     }
-}
-
-class HttpsUpgraderImpl constructor(private val dao: HttpsUpgradeDomainDao) :HttpsUpgrader {
 
     @WorkerThread
-    override fun shouldUpgrade(uri: Uri) : Boolean {
+    fun reloadData()
+}
+
+class HttpsUpgraderImpl(
+    private val httpsWhitelistDao: HttpsWhitelistDao,
+    private val userWhitelistDao: UserWhitelistDao,
+    private val bloomFactory: HttpsBloomFilterFactory,
+    private val httpsUpgradeService: HttpsUpgradeService,
+    private val pixel: Pixel
+) : HttpsUpgrader {
+
+    private var localBloomFilter: BloomFilter? = null
+    private val localDataReloadLock = ReentrantLock()
+    private val isLocalListReloading get() = localDataReloadLock.isLocked
+
+    @WorkerThread
+    override fun shouldUpgrade(uri: Uri): Boolean {
+
         if (uri.isHttps) {
+            pixel.fire(HTTPS_NO_LOOKUP)
             return false
         }
 
-        val host = (uri.host ?: return false).toLowerCase()
-        return dao.hasDomain(host) || matchesWildcard(host)
+        val host = uri.host
+        if (host == null) {
+            pixel.fire(HTTPS_NO_LOOKUP)
+            return false
+        }
+
+        if (userWhitelistDao.contains(host)) {
+            pixel.fire(HTTPS_NO_LOOKUP)
+            Timber.d("$host is in user whitelist and so not upgradable")
+            return false
+        }
+
+        if (httpsWhitelistDao.contains(host)) {
+            pixel.fire(HTTPS_NO_LOOKUP)
+            Timber.d("$host is in https whitelist and so not upgradable")
+            return false
+        }
+
+        val isLocallyUpgradable = !isLocalListReloading && isInLocalUpgradeList(host)
+        Timber.d("$host ${if (isLocallyUpgradable) "is" else "is not"} locally upgradable")
+        if (isLocallyUpgradable) {
+            pixel.fire(HTTPS_LOCAL_UPGRADE)
+            return true
+        }
+
+        val serviceUpgradeResult = isInServiceUpgradeList(host)
+        if (serviceUpgradeResult.isUpgradable) {
+            pixel.fire(if (serviceUpgradeResult.isCached) HTTPS_SERVICE_CACHE_UPGRADE else HTTPS_SERVICE_REQUEST_UPGRADE)
+        } else {
+            pixel.fire(if (serviceUpgradeResult.isCached) HTTPS_SERVICE_CACHE_NO_UPGRADE else HTTPS_SERVICE_REQUEST_NO_UPGRADE)
+        }
+        Timber.d("$host ${if (serviceUpgradeResult.isUpgradable) "is" else "is not"} service upgradable")
+        return serviceUpgradeResult.isUpgradable
     }
 
-    private fun matchesWildcard(host: String): Boolean {
-        val domains = mutableListOf<String>()
-        for (part in host.split(".").reversed()) {
-            if (domains.isEmpty()) {
-                domains.add(".$part")
+    @WorkerThread
+    private fun isInLocalUpgradeList(host: String): Boolean {
+        return localBloomFilter?.contains(host) == true
+    }
+
+    @WorkerThread
+    private fun isInServiceUpgradeList(host: String): HttpsServiceResult {
+
+        val sha1Host = host.sha1
+        val partialSha1Host = sha1Host.substring(0, 4)
+
+        try {
+            val response = httpsUpgradeService.upgradeListForPartialHost(partialSha1Host).execute()
+            if (response.isSuccessful) {
+                val shouldUpgrade = response.body()?.contains(sha1Host) == true
+                return HttpsServiceResult(shouldUpgrade, response.isCached)
             } else {
-                val last = domains.last()
-                domains.add(".$part$last")
+                Timber.w("Service https lookup failed with ${response.code()}")
             }
+        } catch (error: Exception) {
+            Timber.w("Service https lookup failed with $error")
         }
 
-        domains.asReversed().removeAt(0)
-        Timber.d("domains $domains")
-
-        for (domain in domains) {
-            if (dao.hasDomain("*$domain")) {
-                return true
-            }
-        }
-
-        return false
+        return HttpsServiceResult(isUpgradable = false, isCached = false)
     }
 
+    @WorkerThread
+    override fun reloadData() {
+        localDataReloadLock.lock()
+        try {
+            localBloomFilter = bloomFactory.create()
+        } finally {
+            localDataReloadLock.unlock()
+        }
+    }
+
+    data class HttpsServiceResult(
+        val isUpgradable: Boolean,
+        val isCached: Boolean
+    )
 }

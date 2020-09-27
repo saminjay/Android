@@ -16,23 +16,28 @@
 
 package com.duckduckgo.app.settings
 
-import android.arch.core.executor.testing.InstantTaskExecutorRule
-import android.arch.lifecycle.Observer
 import android.content.Context
-import android.net.MailTo
-import android.support.test.InstrumentationRegistry
+import androidx.arch.core.executor.testing.InstantTaskExecutorRule
+import androidx.lifecycle.Observer
+import androidx.test.platform.app.InstrumentationRegistry
 import com.duckduckgo.app.blockingObserve
 import com.duckduckgo.app.browser.BuildConfig
-import com.duckduckgo.app.browser.R
-import com.duckduckgo.app.global.AndroidStringResolver
-import com.duckduckgo.app.global.StringResolver
+import com.duckduckgo.app.browser.defaultbrowsing.DefaultBrowserDetector
+import com.duckduckgo.app.global.DuckDuckGoTheme
+import com.duckduckgo.app.icon.api.AppIcon
 import com.duckduckgo.app.settings.SettingsViewModel.Command
+import com.duckduckgo.app.settings.clear.ClearWhatOption.CLEAR_NONE
+import com.duckduckgo.app.settings.clear.ClearWhenOption.APP_EXIT_ONLY
 import com.duckduckgo.app.settings.db.SettingsDataStore
-import com.nhaarman.mockito_kotlin.KArgumentCaptor
-import com.nhaarman.mockito_kotlin.argumentCaptor
-import com.nhaarman.mockito_kotlin.verify
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
+import com.duckduckgo.app.statistics.Variant
+import com.duckduckgo.app.statistics.VariantManager
+import com.duckduckgo.app.statistics.pixels.Pixel
+import com.nhaarman.mockitokotlin2.KArgumentCaptor
+import com.nhaarman.mockitokotlin2.argumentCaptor
+import com.nhaarman.mockitokotlin2.atLeastOnce
+import com.nhaarman.mockitokotlin2.verify
+import com.nhaarman.mockitokotlin2.whenever
+import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -47,8 +52,6 @@ class SettingsViewModelTest {
 
     private lateinit var testee: SettingsViewModel
 
-    private lateinit var stringResolver: StringResolver
-
     private lateinit var context: Context
 
     @Mock
@@ -57,64 +60,178 @@ class SettingsViewModelTest {
     @Mock
     private lateinit var mockAppSettingsDataStore: SettingsDataStore
 
+    @Mock
+    private lateinit var mockDefaultBrowserDetector: DefaultBrowserDetector
+
+    @Mock
+    private lateinit var mockVariantManager: VariantManager
+
+    @Mock
+    private lateinit var mockPixel: Pixel
+
     private lateinit var commandCaptor: KArgumentCaptor<Command>
 
     @Before
     fun before() {
         MockitoAnnotations.initMocks(this)
 
-        context = InstrumentationRegistry.getTargetContext()
-
-        stringResolver = AndroidStringResolver(context)
+        context = InstrumentationRegistry.getInstrumentation().targetContext
         commandCaptor = argumentCaptor()
 
-
-        testee = SettingsViewModel(stringResolver, mockAppSettingsDataStore)
+        testee = SettingsViewModel(mockAppSettingsDataStore, mockDefaultBrowserDetector, mockVariantManager, mockPixel)
         testee.command.observeForever(commandObserver)
+
+        whenever(mockAppSettingsDataStore.automaticallyClearWhenOption).thenReturn(APP_EXIT_ONLY)
+        whenever(mockAppSettingsDataStore.automaticallyClearWhatOption).thenReturn(CLEAR_NONE)
+        whenever(mockAppSettingsDataStore.appIcon).thenReturn(AppIcon.DEFAULT)
+
+        whenever(mockVariantManager.getVariant()).thenReturn(VariantManager.DEFAULT_VARIANT)
+    }
+
+    @Test
+    fun whenViewModelInitialisedThenPixelIsFired() {
+        testee // init
+        verify(mockPixel).fire(Pixel.PixelName.SETTINGS_OPENED)
     }
 
     @Test
     fun whenStartNotCalledYetThenViewStateInitialisedDefaultValues() {
         assertNotNull(testee.viewState)
 
-        val value = testee.viewState.value!!
-        assertEquals(true, value.loading)
+        val value = latestViewState()
+        assertTrue(value.loading)
         assertEquals("", value.version)
+        assertTrue(value.autoCompleteSuggestionsEnabled)
+        assertFalse(value.showDefaultBrowserSetting)
+        assertFalse(value.isAppDefaultBrowser)
     }
 
     @Test
     fun whenStartCalledThenLoadingSetToFalse() {
         testee.start()
-        val value = testee.viewState.value!!
+        val value = latestViewState()
         assertEquals(false, value.loading)
     }
 
     @Test
     fun whenStartCalledThenVersionSetCorrectly() {
         testee.start()
-        val value = testee.viewState.value!!
-        assertEquals("${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})", value.version)
+        val value = latestViewState()
+        val expectedStartString = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
+        assertTrue(value.version.startsWith(expectedStartString))
     }
 
     @Test
-    fun whenLeaveFeedBackRequestedThenUriContainsCorrectEmail() {
-        testee.userRequestedToSendFeedback()
-        val uri = retrieveObservedUri()
-        assertEquals("android@duckduckgo.com", uri.to)
+    fun whenLightThemeToggledOnThenDataStoreIsUpdatedAndUpdateThemeCommandIsSent() {
+        testee.onLightThemeToggled(true)
+        verify(mockAppSettingsDataStore).theme = DuckDuckGoTheme.LIGHT
+
+        testee.command.blockingObserve()
+        verify(commandObserver, atLeastOnce()).onChanged(commandCaptor.capture())
+        assertEquals(Command.UpdateTheme, commandCaptor.firstValue)
     }
 
     @Test
-    fun whenLeaveFeedBackRequestedThenUriContainsCorrectSubject() {
-        testee.userRequestedToSendFeedback()
-        val uri = retrieveObservedUri()
-        assertEquals(context.getString(R.string.feedbackSubject), uri.subject)
+    fun whenLightThemeToggledOnThenLighThemePixelIsSent() {
+        testee.onLightThemeToggled(true)
+        verify(mockPixel).fire(Pixel.PixelName.SETTINGS_THEME_TOGGLED_LIGHT)
     }
 
-    private fun retrieveObservedUri(): MailTo {
+    @Test
+    fun whenLightThemeTogglesOffThenDataStoreIsUpdatedAndUpdateThemeCommandIsSent() {
+        testee.onLightThemeToggled(false)
+        verify(mockAppSettingsDataStore).theme = DuckDuckGoTheme.DARK
+
+        testee.command.blockingObserve()
+        verify(commandObserver, atLeastOnce()).onChanged(commandCaptor.capture())
+        assertEquals(Command.UpdateTheme, commandCaptor.firstValue)
+    }
+
+    @Test
+    fun whenLightThemeToggledOffThenDarkThemePixelIsSent() {
+        testee.onLightThemeToggled(false)
+        verify(mockPixel).fire(Pixel.PixelName.SETTINGS_THEME_TOGGLED_DARK)
+    }
+
+    @Test
+    fun whenAutocompleteSwitchedOnThenDataStoreIsUpdated() {
+        testee.onAutocompleteSettingChanged(true)
+        verify(mockAppSettingsDataStore).autoCompleteSuggestionsEnabled = true
+    }
+
+    @Test
+    fun whenAutocompleteSwitchedOffThenDataStoreIsUpdated() {
+        testee.onAutocompleteSettingChanged(false)
+        verify(mockAppSettingsDataStore).autoCompleteSuggestionsEnabled = false
+    }
+
+    @Test
+    fun whenLeaveFeedBackRequestedThenCommandIsLaunchFeedback() {
+        testee.userRequestedToSendFeedback()
         testee.command.blockingObserve()
         verify(commandObserver).onChanged(commandCaptor.capture())
-
-        val capturedCommand = commandCaptor.firstValue as Command.SendEmail
-        return MailTo.parse(capturedCommand.emailUri.toString())
+        assertEquals(Command.LaunchFeedback, commandCaptor.firstValue)
     }
+
+    @Test
+    fun whenDefaultBrowserAppAlreadySetToOursThenIsDefaultBrowserFlagIsTrue() {
+        whenever(mockDefaultBrowserDetector.isDefaultBrowser()).thenReturn(true)
+        testee.start()
+        val viewState = latestViewState()
+        assertTrue(viewState.isAppDefaultBrowser)
+    }
+
+    @Test
+    fun whenDefaultBrowserAppNotSetToOursThenIsDefaultBrowserFlagIsFalse() {
+        whenever(mockDefaultBrowserDetector.isDefaultBrowser()).thenReturn(false)
+        testee.start()
+        val viewState = latestViewState()
+        assertFalse(viewState.isAppDefaultBrowser)
+    }
+
+    @Test
+    fun whenBrowserDetectorIndicatesDefaultCannotBeSetThenFlagToShowSettingIsFalse() {
+        whenever(mockDefaultBrowserDetector.deviceSupportsDefaultBrowserConfiguration()).thenReturn(false)
+        testee.start()
+        assertFalse(latestViewState().showDefaultBrowserSetting)
+    }
+
+    @Test
+    fun whenBrowserDetectorIndicatesDefaultCanBeSetThenFlagToShowSettingIsTrue() {
+        whenever(mockDefaultBrowserDetector.deviceSupportsDefaultBrowserConfiguration()).thenReturn(true)
+        testee.start()
+        assertTrue(latestViewState().showDefaultBrowserSetting)
+    }
+
+    @Test
+    fun whenWhitelistSelectedThenPixelIsSentAndWhitelistLaunched() {
+        testee.onManageWhitelistSelected()
+        verify(mockPixel).fire(Pixel.PixelName.SETTINGS_MANAGE_WHITELIST)
+        verify(commandObserver).onChanged(Command.LaunchWhitelist)
+    }
+
+    @Test
+    fun whenVariantIsEmptyThenEmptyVariantIncludedInSettings() {
+        testee.start()
+        val expectedStartString = "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
+        assertEquals(expectedStartString, latestViewState().version)
+    }
+
+    @Test
+    fun whenVariantIsSetThenVariantKeyIncludedInSettings() {
+        whenever(mockVariantManager.getVariant()).thenReturn(Variant("ab", filterBy = { true }))
+        testee.start()
+        val expectedStartString = "${BuildConfig.VERSION_NAME} ab (${BuildConfig.VERSION_CODE})"
+        assertEquals(expectedStartString, latestViewState().version)
+    }
+
+    @Test
+    fun whenChangeIconRequestedThenCommandIsChangeIcon() {
+        testee.userRequestedToChangeIcon()
+        testee.command.blockingObserve()
+        verify(commandObserver).onChanged(commandCaptor.capture())
+        assertEquals(Command.LaunchAppIcon, commandCaptor.firstValue)
+    }
+
+    private fun latestViewState() = testee.viewState.value!!
 }

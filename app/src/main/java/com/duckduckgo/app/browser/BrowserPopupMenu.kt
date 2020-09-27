@@ -24,35 +24,24 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.PopupWindow
-import kotlinx.android.synthetic.main.popup_window_browser_menu.view.*
+import com.duckduckgo.app.statistics.Variant
 
-class BrowserPopupMenu : PopupWindow {
+class BrowserPopupMenu(layoutInflater: LayoutInflater, variant: Variant, view: View = inflate(layoutInflater, variant)) :
+    PopupWindow(view, WRAP_CONTENT, WRAP_CONTENT, true) {
 
-    constructor(layoutInflater: LayoutInflater, view: View = BrowserPopupMenu.inflate(layoutInflater))
-            : super(view, WRAP_CONTENT, WRAP_CONTENT, true) {
+    // popupwindow gets stuck on the screen on API 22 (tested on 23) without a background
+    // color.  Adding it however garbles the elevation so we cannot have elevation here.
 
+    init {
         if (SDK_INT <= 22) {
-            // popupwindow gets stuck on the screen on API 22 (tested on 23) without a background
-            // color.  Adding it however garbles the elevation so we cannot have elevation here.
             setBackgroundDrawable(ColorDrawable(Color.WHITE))
         } else {
             elevation = 6.toFloat()
         }
-
-        disableButtons()
         animationStyle = android.R.style.Animation_Dialog
     }
 
-    private fun disableButtons() {
-        contentView.apply {
-            backPopupMenuItem.isEnabled = false
-            forwardPopupMenuItem.isEnabled = false
-            refreshPopupMenuItem.isEnabled = false
-        }
-    }
-
-    fun enableMenuOption(menuView: View, onClick: () -> Unit) {
-        menuView.isEnabled = true
+    fun onMenuItemClicked(menuView: View, onClick: () -> Unit) {
         menuView.setOnClickListener {
             onClick()
             dismiss()
@@ -71,10 +60,8 @@ class BrowserPopupMenu : PopupWindow {
 
         private const val margin = 30
 
-        fun inflate(layoutInflater: LayoutInflater): View {
+        fun inflate(layoutInflater: LayoutInflater, variant: Variant): View {
             return layoutInflater.inflate(R.layout.popup_window_browser_menu, null)
         }
-
     }
 }
-

@@ -16,12 +16,16 @@
 
 package com.duckduckgo.app
 
-import android.arch.lifecycle.LiveData
-import android.arch.lifecycle.Observer
+import androidx.annotation.UiThread
+import androidx.lifecycle.LiveData
+import androidx.lifecycle.Observer
+import androidx.test.platform.app.InstrumentationRegistry
+import com.duckduckgo.app.di.TestAppComponent
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
 // from https://stackoverflow.com/a/44991770/73479
+@UiThread
 fun <T> LiveData<T>.blockingObserve(): T? {
     var value: T? = null
     val latch = CountDownLatch(1)
@@ -32,4 +36,12 @@ fun <T> LiveData<T>.blockingObserve(): T? {
     observeForever(innerObserver)
     latch.await(2, TimeUnit.SECONDS)
     return value
+}
+
+fun getApp(): TestApplication {
+    return InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as TestApplication
+}
+
+fun getDaggerComponent(): TestAppComponent {
+    return getApp().daggerAppComponent as TestAppComponent
 }

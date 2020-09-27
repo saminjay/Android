@@ -20,14 +20,47 @@ import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.appwidget.AppWidgetProvider
 import android.content.Context
+import android.content.Intent
 import android.widget.RemoteViews
 import com.duckduckgo.app.browser.R
-import com.duckduckgo.app.home.HomeActivity
+import com.duckduckgo.app.global.DuckDuckGoApplication
+import com.duckduckgo.app.global.install.AppInstallStore
+import com.duckduckgo.app.statistics.pixels.Pixel
+import com.duckduckgo.app.statistics.pixels.Pixel.PixelName.WIDGETS_ADDED
+import com.duckduckgo.app.statistics.pixels.Pixel.PixelName.WIDGETS_DELETED
+import com.duckduckgo.app.systemsearch.SystemSearchActivity
+import com.duckduckgo.app.widget.ui.AppWidgetCapabilities
+import javax.inject.Inject
 
-/**
- * Implementation of App Widget functionality.
- */
-class SearchWidget : AppWidgetProvider() {
+class SearchWidgetLight : SearchWidget(R.layout.search_widget_light)
+
+open class SearchWidget(val layoutId: Int = R.layout.search_widget) : AppWidgetProvider() {
+
+    @Inject
+    lateinit var appInstallStore: AppInstallStore
+
+    @Inject
+    lateinit var pixel: Pixel
+
+    @Inject
+    lateinit var widgetCapabilities: AppWidgetCapabilities
+
+    override fun onReceive(context: Context, intent: Intent?) {
+        inject(context)
+        super.onReceive(context, intent)
+    }
+
+    private fun inject(context: Context) {
+        val application = context.applicationContext as DuckDuckGoApplication
+        application.daggerAppComponent.inject(this)
+    }
+
+    override fun onEnabled(context: Context) {
+        if (!appInstallStore.widgetInstalled) {
+            appInstallStore.widgetInstalled = true
+            pixel.fire(WIDGETS_ADDED)
+        }
+    }
 
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
         // There may be multiple widgets active, so update all of them
@@ -36,20 +69,21 @@ class SearchWidget : AppWidgetProvider() {
         }
     }
 
-    companion object {
+    private fun updateAppWidget(context: Context, appWidgetManager: AppWidgetManager, appWidgetId: Int) {
+        val views = RemoteViews(context.packageName, layoutId)
+        views.setOnClickPendingIntent(R.id.widgetContainer, buildPendingIntent(context))
+        appWidgetManager.updateAppWidget(appWidgetId, views)
+    }
 
-        internal fun updateAppWidget(context: Context, appWidgetManager: AppWidgetManager,
-                                     appWidgetId: Int) {
+    private fun buildPendingIntent(context: Context): PendingIntent {
+        val intent = SystemSearchActivity.fromWidget(context)
+        return PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT)
+    }
 
-            val views = RemoteViews(context.packageName, R.layout.search_widget)
-            views.setOnClickPendingIntent(R.id.widgetContainer, buildPendingIntent(context))
-            appWidgetManager.updateAppWidget(appWidgetId, views)
-        }
-
-        private fun buildPendingIntent(context: Context) : PendingIntent {
-            val intent = HomeActivity.launchSkipHome(context)
-            return PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT)
+    override fun onDeleted(context: Context, appWidgetIds: IntArray?) {
+        if (appInstallStore.widgetInstalled && !widgetCapabilities.hasInstalledWidgets) {
+            appInstallStore.widgetInstalled = false
+            pixel.fire(WIDGETS_DELETED)
         }
     }
 }
-

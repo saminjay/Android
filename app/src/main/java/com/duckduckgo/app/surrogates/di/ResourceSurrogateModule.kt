@@ -22,11 +22,10 @@ import dagger.Module
 import dagger.Provides
 import javax.inject.Singleton
 
-
 @Module
 class ResourceSurrogateModule {
 
     @Provides
     @Singleton
-    fun analyticsSurrogates() : ResourceSurrogates = ResourceSurrogatesImpl()
+    fun analyticsSurrogates(): ResourceSurrogates = ResourceSurrogatesImpl()
 }

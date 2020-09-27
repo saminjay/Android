@@ -16,24 +16,38 @@
 
 package com.duckduckgo.app.bookmarks.db
 
-import android.arch.persistence.room.Room
-import android.support.test.InstrumentationRegistry
+import androidx.arch.core.executor.testing.InstantTaskExecutorRule
+import androidx.room.Room
+import androidx.test.platform.app.InstrumentationRegistry
+import com.duckduckgo.app.CoroutineTestRule
 import com.duckduckgo.app.blockingObserve
 import com.duckduckgo.app.global.db.AppDatabase
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 
 class BookmarksDaoTest {
+
+    @get:Rule
+    @Suppress("unused")
+    var instantTaskExecutorRule = InstantTaskExecutorRule()
+
+    @ExperimentalCoroutinesApi
+    @get:Rule
+    var coroutinesTestRule = CoroutineTestRule()
 
     private lateinit var db: AppDatabase
     private lateinit var dao: BookmarksDao
 
     @Before
     fun before() {
-        db = Room.inMemoryDatabaseBuilder(InstrumentationRegistry.getContext(), AppDatabase::class.java)
-                .build()
+        db = Room.inMemoryDatabaseBuilder(InstrumentationRegistry.getInstrumentation().targetContext, AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
         dao = db.bookmarksDao()
     }
 
@@ -64,6 +78,18 @@ class BookmarksDaoTest {
         val list = dao.bookmarks().blockingObserve()
         assertNotNull(list)
         assertTrue(list!!.isEmpty())
+    }
+
+    @Test
+    fun whenBookmarksExistThenReturnTrue() = runBlocking {
+        val bookmark = BookmarkEntity(id = 1, title = "title", url = "www.example.com")
+        dao.insert(bookmark)
+        assertTrue(dao.hasBookmarks())
+    }
+
+    @Test
+    fun whenBookmarkAreEmptyThenReturnFalse() = runBlocking {
+        assertFalse(dao.hasBookmarks())
     }
 
 }

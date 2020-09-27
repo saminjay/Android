@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017 DuckDuckGo
+ * Copyright (c) 2018 DuckDuckGo
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,93 +16,76 @@
 
 package com.duckduckgo.app.browser
 
-import android.arch.core.executor.testing.InstantTaskExecutorRule
-import android.arch.lifecycle.LiveData
-import android.arch.lifecycle.MutableLiveData
-import android.arch.lifecycle.Observer
-import android.arch.persistence.room.Room
-import android.net.Uri
-import android.support.test.InstrumentationRegistry
-import android.view.MenuItem
-import android.view.View
-import com.duckduckgo.app.autocomplete.api.AutoCompleteApi
-import com.duckduckgo.app.bookmarks.db.BookmarkEntity
-import com.duckduckgo.app.bookmarks.db.BookmarksDao
+import androidx.arch.core.executor.testing.InstantTaskExecutorRule
+import androidx.lifecycle.MutableLiveData
+import androidx.lifecycle.Observer
+import com.duckduckgo.app.CoroutineTestRule
 import com.duckduckgo.app.browser.BrowserViewModel.Command
-import com.duckduckgo.app.browser.BrowserViewModel.Command.LandingPage
-import com.duckduckgo.app.browser.BrowserViewModel.Command.Navigate
+import com.duckduckgo.app.browser.BrowserViewModel.Command.DisplayMessage
 import com.duckduckgo.app.browser.omnibar.OmnibarEntryConverter
-import com.duckduckgo.app.global.db.AppDatabase
-import com.duckduckgo.app.privacymonitor.db.NetworkLeaderboardDao
-import com.duckduckgo.app.privacymonitor.db.NetworkLeaderboardEntry
-import com.duckduckgo.app.privacymonitor.db.NetworkPercent
-import com.duckduckgo.app.privacymonitor.model.PrivacyGrade
-import com.duckduckgo.app.privacymonitor.store.PrivacyMonitorRepository
-import com.duckduckgo.app.privacymonitor.store.TermsOfServiceStore
-import com.duckduckgo.app.settings.db.AppConfigurationDao
-import com.duckduckgo.app.settings.db.AppConfigurationEntity
-import com.duckduckgo.app.settings.db.SettingsDataStore
-import com.duckduckgo.app.trackerdetection.model.TrackerNetwork
-import com.duckduckgo.app.trackerdetection.model.TrackerNetworks
-import com.duckduckgo.app.trackerdetection.model.TrackingEvent
-import com.nhaarman.mockito_kotlin.*
+import com.duckduckgo.app.fire.DataClearer
+import com.duckduckgo.app.global.events.db.UserEventsStore
+import com.duckduckgo.app.global.rating.AppEnjoymentPromptEmitter
+import com.duckduckgo.app.global.rating.AppEnjoymentPromptOptions
+import com.duckduckgo.app.global.rating.AppEnjoymentUserEventRecorder
+import com.duckduckgo.app.global.rating.PromptCount
+import com.duckduckgo.app.global.useourapp.UseOurAppDetector
+import com.duckduckgo.app.global.useourapp.UseOurAppDetector.Companion.USE_OUR_APP_DOMAIN
+import com.duckduckgo.app.privacy.ui.PrivacyDashboardActivity
+import com.duckduckgo.app.runBlocking
+import com.duckduckgo.app.statistics.pixels.Pixel
+import com.duckduckgo.app.tabs.model.TabEntity
+import com.duckduckgo.app.tabs.model.TabRepository
+import com.nhaarman.mockitokotlin2.*
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.runBlocking
 import org.junit.After
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
-import org.mockito.*
-import org.mockito.ArgumentMatchers.anyString
-import org.mockito.Mockito.never
-import org.mockito.Mockito.verify
+import org.mockito.ArgumentCaptor
+import org.mockito.Captor
+import org.mockito.Mock
+import org.mockito.MockitoAnnotations
 
+@ExperimentalCoroutinesApi
 class BrowserViewModelTest {
 
     @get:Rule
     @Suppress("unused")
     var instantTaskExecutorRule = InstantTaskExecutorRule()
 
-    private var lastNetworkLeaderboardEntry: NetworkLeaderboardEntry? = null
-
-    private val testNetworkLeaderboardDao: NetworkLeaderboardDao = object : NetworkLeaderboardDao {
-        override fun insert(leaderboardEntry: NetworkLeaderboardEntry) {
-            lastNetworkLeaderboardEntry = leaderboardEntry
-        }
-
-        override fun networkPercents(): LiveData<Array<NetworkPercent>> {
-            return MutableLiveData<Array<NetworkPercent>>()
-        }
-    }
+    @get:Rule
+    var coroutinesTestRule = CoroutineTestRule()
 
     @Mock
-    lateinit var mockQueryObserver: Observer<String>
-
-    @Mock
-    lateinit var mockCommandObserver: Observer<Command>
-
-    @Mock
-    lateinit var mockTermsOfServiceStore: TermsOfServiceStore
-
-    @Mock
-    lateinit var mockSettingsStore: SettingsDataStore
-
-    @Mock
-    lateinit var mockAutoCompleteApi: AutoCompleteApi
-
-    @Mock
-    private lateinit var bookmarksDao: BookmarksDao
-
-    @Mock
-    private lateinit var mockLongPressHandler: LongPressHandler
-
-    @Mock
-    private lateinit var mockOmnibarConverter: OmnibarEntryConverter
+    private lateinit var mockCommandObserver: Observer<Command>
 
     @Captor
     private lateinit var commandCaptor: ArgumentCaptor<Command>
 
-    private lateinit var db: AppDatabase
-    private lateinit var appConfigurationDao: AppConfigurationDao
+    @Mock
+    private lateinit var mockTabRepository: TabRepository
+
+    @Mock
+    private lateinit var mockOmnibarEntryConverter: OmnibarEntryConverter
+
+    @Mock
+    private lateinit var mockAutomaticDataClearer: DataClearer
+
+    @Mock
+    private lateinit var mockAppEnjoymentUserEventRecorder: AppEnjoymentUserEventRecorder
+
+    @Mock
+    private lateinit var mockAppEnjoymentPromptEmitter: AppEnjoymentPromptEmitter
+
+    @Mock
+    private lateinit var mockPixel: Pixel
+
+    @Mock
+    private lateinit var mockUserEventsStore: UserEventsStore
 
     private lateinit var testee: BrowserViewModel
 
@@ -110,341 +93,140 @@ class BrowserViewModelTest {
     fun before() {
         MockitoAnnotations.initMocks(this)
 
-        db = Room.inMemoryDatabaseBuilder(InstrumentationRegistry.getContext(), AppDatabase::class.java)
-                .allowMainThreadQueries()
-                .build()
-        appConfigurationDao = db.appConfigurationDao()
+        doReturn(MutableLiveData<AppEnjoymentPromptOptions>()).whenever(mockAppEnjoymentPromptEmitter).promptType
 
         testee = BrowserViewModel(
-                queryUrlConverter = mockOmnibarConverter,
-                duckDuckGoUrlDetector = DuckDuckGoUrlDetector(),
-                termsOfServiceStore = mockTermsOfServiceStore,
-                trackerNetworks = TrackerNetworks(),
-                privacyMonitorRepository = PrivacyMonitorRepository(),
-                networkLeaderboardDao = testNetworkLeaderboardDao,
-                autoCompleteApi = mockAutoCompleteApi,
-                appSettingsPreferencesStore = mockSettingsStore,
-                bookmarksDao = bookmarksDao,
-                longPressHandler = mockLongPressHandler,
-                appConfigurationDao = appConfigurationDao)
+            tabRepository = mockTabRepository,
+            queryUrlConverter = mockOmnibarEntryConverter,
+            dataClearer = mockAutomaticDataClearer,
+            appEnjoymentPromptEmitter = mockAppEnjoymentPromptEmitter,
+            appEnjoymentUserEventRecorder = mockAppEnjoymentUserEventRecorder,
+            useOurAppDetector = UseOurAppDetector(mockUserEventsStore),
+            dispatchers = coroutinesTestRule.testDispatcherProvider,
+            pixel = mockPixel
+        )
 
-        testee.url.observeForever(mockQueryObserver)
         testee.command.observeForever(mockCommandObserver)
 
-        whenever(mockOmnibarConverter.convertQueryToUri(any())).thenReturn(Uri.parse("duckduckgo.com"))
-
+        runBlocking<Unit> {
+            whenever(mockTabRepository.add()).thenReturn(TAB_ID)
+            whenever(mockOmnibarEntryConverter.convertQueryToUrl(any(), any())).then { it.arguments.first() }
+        }
     }
 
     @After
     fun after() {
-        testee.onCleared()
-        db.close()
-        testee.url.removeObserver(mockQueryObserver)
         testee.command.removeObserver(mockCommandObserver)
     }
 
     @Test
-    fun whenSubmittedQueryHasWhitespaceItIsTrimmed() {
-        testee.onUserSubmittedQuery(" nytimes.com ")
-        verify(mockOmnibarConverter).isWebUrl("nytimes.com")
-        assertEquals("nytimes.com", testee.viewState.value!!.omnibarText)
+    fun whenNewTabRequestedThenTabAddedToRepository() = runBlocking<Unit> {
+        whenever(mockTabRepository.liveSelectedTab).doReturn(MutableLiveData())
+        testee.onNewTabRequested()
+        verify(mockTabRepository).add()
     }
 
     @Test
-    fun whenUrlPresentThenAddBookmarkButtonEnabled() {
-        testee.urlChanged("www.example.com")
-        assertTrue(testee.viewState.value!!.canAddBookmarks)
+    fun whenNewTabRequestedFromSourceTabThenTabAddedToRepositoryWithSourceTabId() = runBlocking<Unit> {
+        whenever(mockTabRepository.liveSelectedTab).doReturn(MutableLiveData())
+        testee.onNewTabRequested("sourceTabId")
+        verify(mockTabRepository).addFromSourceTab(sourceTabId = "sourceTabId")
     }
 
     @Test
-    fun whenNoUrlThenAddBookmarkButtonDisabled() {
-        testee.urlChanged(null)
-        assertFalse(testee.viewState.value!!.canAddBookmarks)
+    fun whenOpenInNewTabRequestedThenTabAddedToRepository() = runBlocking<Unit> {
+        val url = "http://example.com"
+        whenever(mockOmnibarEntryConverter.convertQueryToUrl(url)).thenReturn(url)
+        whenever(mockTabRepository.liveSelectedTab).doReturn(MutableLiveData())
+        testee.onOpenInNewTabRequested(url)
+        verify(mockTabRepository).add(url = url, skipHome = false)
     }
 
     @Test
-    fun whenBookmarkAddedThenDaoIsUpdated() {
-        testee.addBookmark("A title", "www.example.com")
-        verify(bookmarksDao).insert(BookmarkEntity(title = "A title", url = "www.example.com"))
+    fun whenOpenInNewTabRequestedWithSourceTabIdThenTabAddedToRepositoryWithSourceTabId() = runBlocking<Unit> {
+        val url = "http://example.com"
+        whenever(mockOmnibarEntryConverter.convertQueryToUrl(url)).thenReturn(url)
+        whenever(mockTabRepository.liveSelectedTab).doReturn(MutableLiveData())
+        testee.onOpenInNewTabRequested(url, sourceTabId = "tabId")
+        verify(mockTabRepository).addFromSourceTab(url = url, skipHome = false, sourceTabId = "tabId")
     }
 
     @Test
-    fun whenTrackerDetectedThenNetworkLeaderboardUpdated() {
-        testee.trackerDetected(TrackingEvent("http://www.example.com", "http://www.tracker.com/tracker.js", TrackerNetwork("Network1", "www.tracker.com"), false))
-        assertNotNull(lastNetworkLeaderboardEntry)
-        assertEquals(lastNetworkLeaderboardEntry!!.domainVisited, "www.example.com")
-        assertEquals(lastNetworkLeaderboardEntry!!.networkName, "Network1")
+    fun whenTabsUpdatedAndNoTabsThenDefaultTabAddedToRepository() = runBlocking<Unit> {
+        testee.onTabsUpdated(ArrayList())
+        verify(mockTabRepository).addDefaultTab()
     }
 
     @Test
-    fun whenEmptyInputQueryThenNoQueryMadeAvailableToActivity() {
-        testee.onUserSubmittedQuery("")
-        verify(mockQueryObserver, never()).onChanged(ArgumentMatchers.anyString())
+    fun whenTabsUpdatedWithTabsThenNewTabNotLaunched() = runBlocking {
+        testee.onTabsUpdated(listOf(TabEntity(TAB_ID, "", "", skipHome = false, viewed = true, position = 0)))
+        verify(mockCommandObserver, never()).onChanged(any())
     }
 
     @Test
-    fun whenBlankInputQueryThenNoQueryMadeAvailableToActivity() {
-        testee.onUserSubmittedQuery("     ")
-        verify(mockQueryObserver, never()).onChanged(ArgumentMatchers.anyString())
+    fun whenReloadDashboardResultReceivedThenRefreshTriggered() {
+        testee.receivedDashboardResult(PrivacyDashboardActivity.RELOAD_RESULT_CODE)
+        verify(mockCommandObserver).onChanged(commandCaptor.capture())
+        assertEquals(Command.Refresh, commandCaptor.lastValue)
     }
 
     @Test
-    fun whenNonEmptyInputThenQueryMadeAvailableToActivity() {
-        testee.onUserSubmittedQuery("foo")
-        verify(mockQueryObserver).onChanged(ArgumentMatchers.anyString())
+    fun whenUnknownDashboardResultReceivedThenNoCommandTriggered() {
+        testee.receivedDashboardResult(1111)
+        verify(mockCommandObserver, never()).onChanged(any())
     }
 
     @Test
-    fun whenViewModelNotifiedThatWebViewIsLoadingThenViewStateIsUpdated() {
-        testee.loadingStarted()
-        assertTrue(testee.viewState.value!!.isLoading)
+    fun whenClearCompleteThenMessageDisplayed() {
+        testee.onClearComplete()
+        verify(mockCommandObserver).onChanged(commandCaptor.capture())
+        assertEquals(DisplayMessage(R.string.fireDataCleared), commandCaptor.lastValue)
     }
 
     @Test
-    fun whenViewModelNotifiedThatWebViewHasFinishedLoadingThenViewStateIsUpdated() {
-        testee.loadingFinished()
-        assertFalse(testee.viewState.value!!.isLoading)
+    fun whenUserSelectedToRateAppThenPlayStoreCommandTriggered() {
+        testee.onUserSelectedToRateApp(PromptCount.first())
+        verify(mockCommandObserver).onChanged(commandCaptor.capture())
+        assertEquals(Command.LaunchPlayStore, commandCaptor.lastValue)
     }
 
     @Test
-    fun whenViewModelNotifiedThatUrlGotFocusThenViewStateIsUpdated() {
-        testee.onOmnibarInputStateChanged("", true)
-        assertTrue(testee.viewState.value!!.isEditing)
+    fun whenUserSelectedToGiveFeedbackThenFeedbackCommandTriggered() {
+        testee.onUserSelectedToGiveFeedback(PromptCount.first())
+        verify(mockCommandObserver).onChanged(commandCaptor.capture())
+        assertEquals(Command.LaunchFeedbackView, commandCaptor.lastValue)
     }
 
     @Test
-    fun whenViewModelNotifiedThatUrlLostFocusThenViewStateIsUpdated() {
-        testee.onOmnibarInputStateChanged("", false)
-        assertFalse(testee.viewState.value!!.isEditing)
+    fun whenViewStateCreatedThenWebViewContentShouldBeHidden() {
+        assertTrue(testee.viewState.value!!.hideWebContent)
     }
 
     @Test
-    fun whenNoOmnibarTextEverEnteredThenViewStateHasNull() {
-        assertNull(testee.viewState.value!!.omnibarText)
+    fun whenOpenShortcutThenSelectByUrlOrNewTab() = coroutinesTestRule.runBlocking {
+        val url = "example.com"
+        whenever(mockOmnibarEntryConverter.convertQueryToUrl(url)).thenReturn(url)
+        testee.onOpenShortcut(url)
+        verify(mockTabRepository).selectByUrlOrNewTab(url)
     }
 
     @Test
-    fun whenUrlChangedThenViewStateIsUpdated() {
-        testee.urlChanged("duckduckgo.com")
-        assertEquals("duckduckgo.com", testee.viewState.value!!.omnibarText)
+    fun whenOpenShortcutIfUrlIsUseOurAppDomainThenFirePixel() {
+        val url = "http://m.$USE_OUR_APP_DOMAIN"
+        whenever(mockOmnibarEntryConverter.convertQueryToUrl(url)).thenReturn(url)
+        testee.onOpenShortcut(url)
+        verify(mockPixel).fire(Pixel.PixelName.USE_OUR_APP_SHORTCUT_OPENED)
     }
 
     @Test
-    fun whenUrlChangedWithDuckDuckGoUrlContainingQueryThenUrlRewrittenToContainQuery() {
-        testee.urlChanged("http://duckduckgo.com?q=test")
-        assertEquals("test", testee.viewState.value!!.omnibarText)
+    fun whenOpenShortcutIfUrlIsNotUSeOurAppUrlThenFirePixel() {
+        val url = "example.com"
+        whenever(mockOmnibarEntryConverter.convertQueryToUrl(url)).thenReturn(url)
+        testee.onOpenShortcut(url)
+        verify(mockPixel).fire(Pixel.PixelName.SHORTCUT_OPENED)
     }
 
-    @Test
-    fun whenUrlChangedWithDuckDuckGoUrlNotContainingQueryThenFullUrlShown() {
-        testee.urlChanged("http://duckduckgo.com")
-        assertEquals("http://duckduckgo.com", testee.viewState.value!!.omnibarText)
-    }
-
-    @Test
-    fun whenUrlChangedWithNonDuckDuckGoUrlThenFullUrlShown() {
-        testee.urlChanged("http://example.com")
-        assertEquals("http://example.com", testee.viewState.value!!.omnibarText)
-    }
-
-    @Test
-    fun whenSharedTextReceivedThenNavigationTriggered() {
-        testee.onSharedTextReceived("http://example.com")
-        verify(mockCommandObserver, times(2)).onChanged(commandCaptor.capture())
-        assertNotNull(commandCaptor.value)
-        assertTrue(commandCaptor.value is Navigate)
-    }
-
-    @Test
-    fun whenViewModelGetsProgressUpdateThenViewStateIsUpdated() {
-        testee.progressChanged(0)
-        assertEquals(0, testee.viewState.value!!.progress)
-
-        testee.progressChanged(50)
-        assertEquals(50, testee.viewState.value!!.progress)
-
-        testee.progressChanged(100)
-        assertEquals(100, testee.viewState.value!!.progress)
-    }
-
-    @Test
-    fun whenUserDismissesKeyboardBeforeBrowserShownThenShouldNavigateToLandingPage() {
-        testee.userDismissedKeyboard()
-        verify(mockCommandObserver).onChanged(ArgumentMatchers.any(LandingPage::class.java))
-    }
-
-    @Test
-    fun whenUserDismissesKeyboardAfterBrowserShownThenShouldNotNavigateToLandingPage() {
-        testee.urlChanged("")
-        verify(mockCommandObserver, never()).onChanged(ArgumentMatchers.any(LandingPage::class.java))
-    }
-
-    @Test
-    fun whenUserDismissesKeyboardBeforeBrowserShownThenShouldConsumeBackButtonEvent() {
-        assertTrue(testee.userDismissedKeyboard())
-    }
-
-    @Test
-    fun whenUserDismissesKeyboardAfterBrowserShownThenShouldNotConsumeBackButtonEvent() {
-        testee.urlChanged("")
-        assertFalse(testee.userDismissedKeyboard())
-    }
-
-    @Test
-    fun whenLoadingStartedThenPrivacyGradeIsCleared() {
-        testee.loadingStarted()
-        assertNull(testee.privacyGrade.value)
-    }
-
-    @Test
-    fun whenUrlChangedThenPrivacyGradeIsReset() {
-        testee.urlChanged("https://example.com")
-        assertEquals(PrivacyGrade.B, testee.privacyGrade.value)
-    }
-
-    @Test
-    fun whenEnoughTrackersDetectedThenPrivacyGradeIsUpdated() {
-        testee.urlChanged("https://example.com")
-        for (i in 1..10) {
-            testee.trackerDetected(TrackingEvent("https://example.com", "", null, false))
-        }
-        assertEquals(PrivacyGrade.C, testee.privacyGrade.value)
-    }
-
-    @Test
-    fun whenInitialisedThenPrivacyGradeIsNotShown() {
-        assertFalse(testee.viewState.value!!.showPrivacyGrade)
-    }
-
-    @Test
-    fun whenUrlUpdatedAfterConfigDownloadThenPrivacyGradeIsShown() {
-        testee.appConfigurationObserver.onChanged(AppConfigurationEntity(appConfigurationDownloaded = true))
-        testee.urlChanged((""))
-        assertTrue(testee.viewState.value!!.showPrivacyGrade)
-    }
-
-    @Test
-    fun whenUrlUpdatedBeforeConfigDownloadThenPrivacyGradeIsShown() {
-        testee.appConfigurationObserver.onChanged(AppConfigurationEntity(appConfigurationDownloaded = false))
-        testee.urlChanged((""))
-        assertFalse(testee.viewState.value!!.showPrivacyGrade)
-    }
-
-    @Test
-    fun whenOmnibarInputDoesNotHaveFocusAndAppConfigDownloadedThenPrivacyGradeIsShown() {
-        testee.appConfigurationObserver.onChanged(AppConfigurationEntity(appConfigurationDownloaded = true))
-        testee.onOmnibarInputStateChanged("", false)
-        assertTrue(testee.viewState.value!!.showPrivacyGrade)
-    }
-
-    @Test
-    fun whenOmnibarInputDoesNotHaveFocusAndAppConfigNotDownloadedThenPrivacyGradeIsNotShown() {
-        testee.appConfigurationObserver.onChanged(AppConfigurationEntity(appConfigurationDownloaded = false))
-        testee.onOmnibarInputStateChanged("", false)
-        assertFalse(testee.viewState.value!!.showPrivacyGrade)
-    }
-
-    @Test
-    fun whenOmnibarInputHasFocusThenPrivacyGradeIsNotShown() {
-        testee.onOmnibarInputStateChanged("", true)
-        assertFalse(testee.viewState.value!!.showPrivacyGrade)
-    }
-
-    @Test
-    fun whenInitialisedThenFireButtonIsShown() {
-        assertTrue(testee.viewState.value!!.showFireButton)
-    }
-
-    @Test
-    fun whenOmnibarInputDoesNotHaveFocusThenFireButtonIsShown() {
-        testee.onOmnibarInputStateChanged("", false)
-        assertTrue(testee.viewState.value!!.showFireButton)
-    }
-
-    @Test
-    fun whenOmnibarInputHasFocusThenFireButtonIsNotShown() {
-        testee.onOmnibarInputStateChanged("", true)
-        assertFalse(testee.viewState.value!!.showFireButton)
-    }
-
-    @Test
-    fun whenEnteringQueryWithAutoCompleteEnabledThenAutoCompleteSuggestionsShown() {
-        doReturn(true).whenever(mockSettingsStore).autoCompleteSuggestionsEnabled
-        testee.onOmnibarInputStateChanged("foo", true)
-        assertTrue(testee.viewState.value!!.showAutoCompleteSuggestions)
-    }
-
-    @Test
-    fun whenEnteringQueryWithAutoCompleteDisabledThenAutoCompleteSuggestionsNotShown() {
-        doReturn(false).whenever(mockSettingsStore).autoCompleteSuggestionsEnabled
-        testee.onOmnibarInputStateChanged("foo", true)
-        assertFalse(testee.viewState.value!!.showAutoCompleteSuggestions)
-    }
-
-    @Test
-    fun whenEnteringEmptyQueryWithAutoCompleteEnabledThenAutoCompleteSuggestionsNotShown() {
-        doReturn(true).whenever(mockSettingsStore).autoCompleteSuggestionsEnabled
-        testee.onOmnibarInputStateChanged("", true)
-        assertFalse(testee.viewState.value!!.showAutoCompleteSuggestions)
-    }
-
-    @Test
-    fun whenEnteringEmptyQueryWithAutoCompleteDisabledThenAutoCompleteSuggestionsNotShown() {
-        doReturn(false).whenever(mockSettingsStore).autoCompleteSuggestionsEnabled
-        testee.onOmnibarInputStateChanged("", true)
-        assertFalse(testee.viewState.value!!.showAutoCompleteSuggestions)
-    }
-
-    @Test
-    fun whenEnteringEmptyQueryThenHideKeyboardCommandNotIssued() {
-        testee.onUserSubmittedQuery("")
-        verify(mockCommandObserver, never()).onChanged(Mockito.any(Command.HideKeyboard.javaClass))
-    }
-
-    @Test
-    fun whenEnteringNonEmptyQueryThenHideKeyboardCommandIssued() {
-        testee.onUserSubmittedQuery("foo")
-        verify(mockCommandObserver, Mockito.atLeastOnce()).onChanged(commandCaptor.capture())
-        assertTrue(commandCaptor.value == Command.HideKeyboard)
-    }
-
-    @Test
-    fun whenNotifiedEnteringFullScreenThenViewStateUpdatedWithFullScreenFlag() {
-        val stubView = View(InstrumentationRegistry.getTargetContext())
-        testee.goFullScreen(stubView)
-        assertTrue(testee.viewState.value!!.isFullScreen)
-    }
-
-    @Test
-    fun whenNotifiedEnteringFullScreenThenEnterFullScreenCommandIssued() {
-        val stubView = View(InstrumentationRegistry.getTargetContext())
-        testee.goFullScreen(stubView)
-        verify(mockCommandObserver, Mockito.atLeastOnce()).onChanged(commandCaptor.capture())
-        assertTrue(commandCaptor.lastValue is Command.ShowFullScreen)
-    }
-
-    @Test
-    fun whenNotifiedLeavingFullScreenThenViewStateUpdatedWithFullScreenFlagDisabled() {
-        testee.exitFullScreen()
-        assertFalse(testee.viewState.value!!.isFullScreen)
-    }
-
-    @Test
-    fun whenViewModelInitialisedThenFullScreenFlagIsDisabled() {
-        assertFalse(testee.viewState.value!!.isFullScreen)
-    }
-
-    @Test
-    fun whenUserSelectsDownloadImageOptionFromContextMenuThenDownloadFileCommandIssued() {
-        whenever(mockLongPressHandler.userSelectedMenuItem(anyString(), any()))
-                .thenReturn(LongPressHandler.RequiredAction.DownloadFile("example.com"))
-
-        val mockMenuItem : MenuItem = mock()
-        testee.userSelectedItemFromLongPressMenu("example.com", mockMenuItem)
-        verify(mockCommandObserver, Mockito.atLeastOnce()).onChanged(commandCaptor.capture())
-        assertTrue(commandCaptor.lastValue is Command.DownloadImage)
-
-        val lastCommand = commandCaptor.lastValue as Command.DownloadImage
-        assertEquals("example.com", lastCommand.url)
+    companion object {
+        const val TAB_ID = "TAB_ID"
     }
 }

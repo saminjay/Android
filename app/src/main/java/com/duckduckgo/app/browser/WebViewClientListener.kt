@@ -16,20 +16,43 @@
 
 package com.duckduckgo.app.browser
 
+import android.net.Uri
+import android.os.Message
 import android.view.View
+import android.webkit.GeolocationPermissions
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
+import com.duckduckgo.app.browser.model.BasicAuthenticationRequest
+import com.duckduckgo.app.surrogates.SurrogateResponse
 import com.duckduckgo.app.trackerdetection.model.TrackingEvent
 
 interface WebViewClientListener {
-    fun loadingStarted()
-    fun loadingFinished()
+
+    fun navigationStateChanged(newWebNavigationState: WebNavigationState)
+    fun pageRefreshed(refreshedUrl: String)
     fun progressChanged(newProgress: Int)
-    fun urlChanged(url: String?)
+
+    fun onSiteLocationPermissionRequested(origin: String, callback: GeolocationPermissions.Callback)
+
+    fun titleReceived(newTitle: String)
     fun trackerDetected(event: TrackingEvent)
-    fun pageHasHttpResources(page: String?)
+    fun pageHasHttpResources(page: String)
 
     fun sendEmailRequested(emailAddress: String)
     fun sendSmsRequested(telephoneNumber: String)
     fun dialTelephoneNumberRequested(telephoneNumber: String)
     fun goFullScreen(view: View)
     fun exitFullScreen()
+    fun showFileChooser(filePathCallback: ValueCallback<Array<Uri>>, fileChooserParams: WebChromeClient.FileChooserParams)
+    fun externalAppLinkClicked(appLink: SpecialUrlDetector.UrlType.IntentType)
+    fun openMessageInNewTab(message: Message)
+    fun recoverFromRenderProcessGone()
+    fun requiresAuthentication(request: BasicAuthenticationRequest)
+    fun closeCurrentTab()
+    fun closeAndSelectSourceTab()
+    fun upgradedToHttps()
+    fun surrogateDetected(surrogate: SurrogateResponse)
+
+    fun loginDetected()
+    fun dosAttackDetected()
 }

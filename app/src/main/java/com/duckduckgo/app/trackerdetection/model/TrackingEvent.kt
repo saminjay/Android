@@ -16,8 +16,10 @@
 
 package com.duckduckgo.app.trackerdetection.model
 
-
-data class TrackingEvent(val documentUrl: String,
-                         val trackerUrl: String,
-                         val trackerNetwork: TrackerNetwork?,
-                         val blocked: Boolean)
+data class TrackingEvent(
+    val documentUrl: String,
+    val trackerUrl: String,
+    val categories: List<String>?,
+    val entity: Entity?,
+    val blocked: Boolean
+)

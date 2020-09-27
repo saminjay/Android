@@ -14,28 +14,44 @@
  * limitations under the License.
  */
 
+@file:Suppress("RemoveExplicitTypeArguments")
+
 package com.duckduckgo.app.browser
 
-import android.support.test.InstrumentationRegistry
+import android.content.Context
+import android.os.Message
 import android.view.View
 import android.webkit.WebChromeClient
-import com.nhaarman.mockito_kotlin.mock
-import com.nhaarman.mockito_kotlin.times
-import com.nhaarman.mockito_kotlin.verify
+import android.webkit.WebView
+import androidx.test.annotation.UiThreadTest
+import androidx.test.platform.app.InstrumentationRegistry.getInstrumentation
+import com.duckduckgo.app.global.exception.UncaughtExceptionRepository
+import com.nhaarman.mockitokotlin2.*
 import org.junit.Before
 import org.junit.Test
 
 class BrowserChromeClientTest {
 
     private lateinit var testee: BrowserChromeClient
+    private lateinit var webView: TestWebView
     private lateinit var mockWebViewClientListener: WebViewClientListener
-    private val fakeView = View(InstrumentationRegistry.getTargetContext())
+    private lateinit var mockUncaughtExceptionRepository: UncaughtExceptionRepository
+    private val fakeView = View(getInstrumentation().targetContext)
 
+    @UiThreadTest
     @Before
     fun setup() {
-        testee = BrowserChromeClient()
+        mockUncaughtExceptionRepository = mock()
+        testee = BrowserChromeClient(mockUncaughtExceptionRepository)
         mockWebViewClientListener = mock()
         testee.webViewClientListener = mockWebViewClientListener
+        webView = TestWebView(getInstrumentation().targetContext)
+    }
+
+    @Test
+    fun whenWindowClosedThenCloseCurrentTab() {
+        testee.onCloseWindow(window = null)
+        verify(mockWebViewClientListener).closeCurrentTab()
     }
 
     @Test
@@ -66,4 +82,40 @@ class BrowserChromeClientTest {
         testee.onHideCustomView()
         verify(mockWebViewClientListener).exitFullScreen()
     }
+
+    @UiThreadTest
+    @Test
+    fun whenOnProgressChangedCalledThenListenerInstructedToUpdateProgress() {
+        testee.onProgressChanged(webView, 10)
+        verify(mockWebViewClientListener).progressChanged(10)
+    }
+
+    @UiThreadTest
+    @Test
+    fun whenOnProgressChangedCalledThenListenerInstructedToUpdateNavigationState() {
+        testee.onProgressChanged(webView, 10)
+        verify(mockWebViewClientListener).navigationStateChanged(any())
+    }
+
+    @UiThreadTest
+    @Test
+    fun whenOnCreateWindowWithUserGestureThenMessageOpenedInNewTab() {
+        testee.onCreateWindow(webView, isDialog = false, isUserGesture = true, resultMsg = mockMsg)
+        verify(mockWebViewClientListener).openMessageInNewTab(eq(mockMsg))
+        verifyNoMoreInteractions(mockWebViewClientListener)
+    }
+
+    @UiThreadTest
+    @Test
+    fun whenOnCreateWindowWithoutUserGestureThenNewTabNotOpened() {
+        testee.onCreateWindow(webView, isDialog = false, isUserGesture = false, resultMsg = mockMsg)
+        verifyZeroInteractions(mockWebViewClientListener)
+    }
+
+    private val mockMsg = Message().apply {
+        target = mock()
+        obj = mock<WebView.WebViewTransport>()
+    }
+
+    private class TestWebView(context: Context) : WebView(context)
 }

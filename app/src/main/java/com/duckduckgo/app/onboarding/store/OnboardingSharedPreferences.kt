@@ -18,28 +18,20 @@ package com.duckduckgo.app.onboarding.store
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.core.content.edit
 import javax.inject.Inject
-
 
 class OnboardingSharedPreferences @Inject constructor(private val context: Context) : OnboardingStore {
 
-    override val shouldShow: Boolean
-        get() = preferences.getInt(onboardingVersion, 0) < currentVersion
-
-    override fun onboardingShown() {
-        val editor = preferences.edit()
-        editor.putInt(onboardingVersion, currentVersion)
-        editor.apply()
-    }
+    override var onboardingDialogJourney: String?
+        get() = preferences.getString(ONBOARDING_JOURNEY, null)
+        set(dialogJourney) = preferences.edit { putString(ONBOARDING_JOURNEY, dialogJourney) }
 
     private val preferences: SharedPreferences
-        get() = context.getSharedPreferences(name, Context.MODE_PRIVATE)
-
+        get() = context.getSharedPreferences(FILENAME, Context.MODE_PRIVATE)
 
     companion object {
-        val name = "com.duckduckgo.app.onboarding.settings"
-        val currentVersion = 1
-        val onboardingVersion = "com.duckduckgo.app.onboarding.currentVersion"
+        const val FILENAME = "com.duckduckgo.app.onboarding.settings"
+        const val ONBOARDING_JOURNEY = "onboardingJourney"
     }
-    
 }

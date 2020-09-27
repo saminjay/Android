@@ -16,42 +16,43 @@
 
 package com.duckduckgo.app.job
 
+import com.duckduckgo.app.httpsupgrade.api.HttpsUpgradeDataDownloader
 import com.duckduckgo.app.surrogates.api.ResourceSurrogateListDownloader
-import com.duckduckgo.app.global.db.AppDatabase
-import com.duckduckgo.app.httpsupgrade.api.HttpsUpgradeListDownloader
-import com.duckduckgo.app.settings.db.AppConfigurationEntity
-import com.duckduckgo.app.trackerdetection.Client.ClientName.*
+import com.duckduckgo.app.survey.api.SurveyDownloader
 import com.duckduckgo.app.trackerdetection.api.TrackerDataDownloader
 import io.reactivex.Completable
-import io.reactivex.schedulers.Schedulers
 import timber.log.Timber
-import javax.inject.Inject
 
-class AppConfigurationDownloader @Inject constructor(
-        private val trackerDataDownloader: TrackerDataDownloader,
-        private val httpsUpgradeListDownloader: HttpsUpgradeListDownloader,
-        private val resourceSurrogateDownloader: ResourceSurrogateListDownloader,
-        private val appDatabase: AppDatabase) {
+interface ConfigurationDownloader {
+    fun downloadTask(): Completable
+}
 
-    fun downloadTask(): Completable {
-        val easyListDownload = trackerDataDownloader.downloadList(EASYLIST)
-        val easyPrivacyDownload = trackerDataDownloader.downloadList(EASYPRIVACY)
-        val trackersWhitelist = trackerDataDownloader.downloadList(TRACKERSWHITELIST)
-        val disconnectDownload = trackerDataDownloader.downloadList(DISCONNECT)
+class AppConfigurationDownloader(
+    private val trackerDataDownloader: TrackerDataDownloader,
+    private val httpsUpgradeDataDownloader: HttpsUpgradeDataDownloader,
+    private val resourceSurrogateDownloader: ResourceSurrogateListDownloader,
+    private val surveyDownloader: SurveyDownloader
+) : ConfigurationDownloader {
+
+    override fun downloadTask(): Completable {
+        val tdsDownload = trackerDataDownloader.downloadTds()
+        val temporaryTrackingWhitelist = trackerDataDownloader.downloadTemporaryWhitelist()
+        val clearLegacyLists = trackerDataDownloader.clearLegacyLists()
         val surrogatesDownload = resourceSurrogateDownloader.downloadList()
-        val httpsUpgradeDownload = httpsUpgradeListDownloader.downloadList()
+        val httpsUpgradeDownload = httpsUpgradeDataDownloader.download()
+        val surveyDownload = surveyDownloader.download()
 
-        return Completable.mergeDelayError(listOf(
-                easyListDownload.subscribeOn(Schedulers.io()),
-                easyPrivacyDownload.subscribeOn(Schedulers.io()),
-                trackersWhitelist.subscribeOn(Schedulers.io()),
-                disconnectDownload.subscribeOn(Schedulers.io()),
-                surrogatesDownload.subscribeOn(Schedulers.io()),
-                httpsUpgradeDownload.subscribeOn(Schedulers.io())
-        )).doOnComplete {
+        return Completable.mergeDelayError(
+            listOf(
+                tdsDownload,
+                temporaryTrackingWhitelist,
+                clearLegacyLists,
+                surrogatesDownload,
+                httpsUpgradeDownload,
+                surveyDownload
+            )
+        ).doOnComplete {
             Timber.i("Download task completed successfully")
-            val appConfiguration = AppConfigurationEntity(appConfigurationDownloaded = true)
-            appDatabase.appConfigurationDao().configurationDownloadSuccessful(appConfiguration)
         }
     }
 }

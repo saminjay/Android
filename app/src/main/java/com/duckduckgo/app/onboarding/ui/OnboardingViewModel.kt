@@ -16,12 +16,36 @@
 
 package com.duckduckgo.app.onboarding.ui
 
-import android.arch.lifecycle.ViewModel
-import com.duckduckgo.app.onboarding.store.OnboardingStore
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.duckduckgo.app.global.DispatcherProvider
+import com.duckduckgo.app.onboarding.store.AppStage
+import com.duckduckgo.app.onboarding.store.UserStageStore
+import com.duckduckgo.app.onboarding.ui.page.OnboardingPageFragment
+import kotlinx.coroutines.launch
 
-class OnboardingViewModel(private val onboardingStore: OnboardingStore) : ViewModel() {
+class OnboardingViewModel(
+    private val userStageStore: UserStageStore,
+    private val pageLayoutManager: OnboardingPageManager,
+    private val dispatchers: DispatcherProvider
+) : ViewModel() {
+
+    fun initializePages() {
+        pageLayoutManager.buildPageBlueprints()
+    }
+
+    fun pageCount(): Int {
+        return pageLayoutManager.pageCount()
+    }
+
+    fun getItem(position: Int): OnboardingPageFragment? {
+        return pageLayoutManager.buildPage(position)
+    }
 
     fun onOnboardingDone() {
-        onboardingStore.onboardingShown()
+        // Executing this on IO to avoid any delay changing threads between Main-IO.
+        viewModelScope.launch(dispatchers.io()) {
+            userStageStore.stageCompleted(AppStage.NEW)
+        }
     }
 }

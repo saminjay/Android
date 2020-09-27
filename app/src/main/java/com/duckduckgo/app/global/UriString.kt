@@ -17,13 +17,43 @@
 package com.duckduckgo.app.global
 
 import android.net.Uri
+import androidx.core.util.PatternsCompat
 
 class UriString {
+
     companion object {
+
+        private const val localhost = "localhost"
+        private const val space = " "
+        private val webUrlRegex by lazy { PatternsCompat.WEB_URL.toRegex() }
+        private val domainRegex by lazy { PatternsCompat.DOMAIN_NAME.toRegex() }
+
+        fun host(uriString: String): String? {
+            return Uri.parse(uriString).baseHost
+        }
+
         fun sameOrSubdomain(child: String, parent: String): Boolean {
-            val childHost = Uri.parse(child)?.baseHost ?: return false
-            val parentHost = Uri.parse(parent)?.baseHost ?: return false
+            val childHost = host(child) ?: return false
+            val parentHost = host(parent) ?: return false
             return parentHost == childHost || childHost.endsWith(".$parentHost")
         }
+
+        fun isWebUrl(inputQuery: String): Boolean {
+            if (inputQuery.contains(space)) return false
+            val uri = Uri.parse(inputQuery).withScheme()
+            if (uri.scheme != UrlScheme.http && uri.scheme != UrlScheme.https) return false
+            if (uri.userInfo != null) return false
+
+            val host = uri.host ?: return false
+            if (host == localhost) return true
+            if (host.contains(space)) return false
+            if (host.contains("!")) return false
+            return (webUrlRegex.containsMatchIn(host))
+        }
+
+        fun isValidDomain(domain: String): Boolean {
+            return domainRegex.matches(domain)
+        }
+
     }
 }

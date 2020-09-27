@@ -16,17 +16,37 @@
 
 package com.duckduckgo.app.httpsupgrade.di
 
+import com.duckduckgo.app.global.store.BinaryDataStore
 import com.duckduckgo.app.httpsupgrade.HttpsUpgrader
 import com.duckduckgo.app.httpsupgrade.HttpsUpgraderImpl
-import com.duckduckgo.app.httpsupgrade.db.HttpsUpgradeDomainDao
+import com.duckduckgo.app.httpsupgrade.api.HttpsBloomFilterFactory
+import com.duckduckgo.app.httpsupgrade.api.HttpsBloomFilterFactoryImpl
+import com.duckduckgo.app.httpsupgrade.api.HttpsUpgradeService
+import com.duckduckgo.app.httpsupgrade.db.HttpsBloomFilterSpecDao
+import com.duckduckgo.app.httpsupgrade.db.HttpsWhitelistDao
+import com.duckduckgo.app.privacy.db.UserWhitelistDao
+import com.duckduckgo.app.statistics.pixels.Pixel
 import dagger.Module
 import dagger.Provides
+import javax.inject.Singleton
 
 @Module
 class HttpsUpgraderModule {
 
+    @Singleton
     @Provides
-    fun httpsUpgrader(dao: HttpsUpgradeDomainDao): HttpsUpgrader {
-        return HttpsUpgraderImpl(dao)
+    fun httpsUpgrader(
+        whitelistDao: HttpsWhitelistDao,
+        userWhitelistDao: UserWhitelistDao,
+        bloomFilterFactory: HttpsBloomFilterFactory,
+        httpsUpgradeService: HttpsUpgradeService,
+        pixel: Pixel
+    ): HttpsUpgrader {
+        return HttpsUpgraderImpl(whitelistDao, userWhitelistDao, bloomFilterFactory, httpsUpgradeService, pixel)
+    }
+
+    @Provides
+    fun bloomFilterFactory(specificationDao: HttpsBloomFilterSpecDao, binaryDataStore: BinaryDataStore): HttpsBloomFilterFactory {
+        return HttpsBloomFilterFactoryImpl(specificationDao, binaryDataStore)
     }
 }

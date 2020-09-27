@@ -17,19 +17,32 @@
 package com.duckduckgo.app.browser
 
 import android.net.Uri
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
+import com.duckduckgo.app.global.AppUrl.ParamKey
+import com.duckduckgo.app.referral.AppReferrerDataStore
+import com.duckduckgo.app.statistics.Variant
+import com.duckduckgo.app.statistics.VariantManager
+import com.duckduckgo.app.statistics.model.Atb
+import com.duckduckgo.app.statistics.store.StatisticsDataStore
+import com.nhaarman.mockitokotlin2.mock
+import com.nhaarman.mockitokotlin2.whenever
+import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 
 class DuckDuckGoRequestRewriterTest {
 
     private lateinit var testee: DuckDuckGoRequestRewriter
+    private val mockStatisticsStore: StatisticsDataStore = mock()
+    private val mockVariantManager: VariantManager = mock()
+    private val mockAppReferrerDataStore: AppReferrerDataStore = mock()
     private lateinit var builder: Uri.Builder
+    private val currentUrl = "http://www.duckduckgo.com"
 
     @Before
     fun before() {
-        testee = DuckDuckGoRequestRewriter(DuckDuckGoUrlDetector())
+        whenever(mockVariantManager.getVariant()).thenReturn(VariantManager.DEFAULT_VARIANT)
+        whenever(mockAppReferrerDataStore.installedFromEuAuction).thenReturn(false)
+        testee = DuckDuckGoRequestRewriter(DuckDuckGoUrlDetector(), mockStatisticsStore, mockVariantManager, mockAppReferrerDataStore)
         builder = Uri.Builder()
     }
 
@@ -37,15 +50,54 @@ class DuckDuckGoRequestRewriterTest {
     fun whenAddingCustomParamsSourceParameterIsAdded() {
         testee.addCustomQueryParams(builder)
         val uri = builder.build()
-        assertTrue(uri.queryParameterNames.contains("t"))
-        assertEquals("ddg_android", uri.getQueryParameter("t"))
+        assertTrue(uri.queryParameterNames.contains(ParamKey.SOURCE))
+        assertEquals("ddg_android", uri.getQueryParameter(ParamKey.SOURCE))
     }
 
     @Test
-    fun whenAddingCustomParamsAppVersionParameterIsAdded() {
+    fun whenAddingCustomParamsAndUserSourcedFromEuAuctionThenEuSourceParameterIsAdded() {
+        whenever(mockAppReferrerDataStore.installedFromEuAuction).thenReturn(true)
         testee.addCustomQueryParams(builder)
         val uri = builder.build()
-        assertTrue(uri.queryParameterNames.contains("tappv"))
-        assertEquals("android_${BuildConfig.VERSION_NAME.replace(".", "_")}", uri.getQueryParameter("tappv"))
+        assertTrue(uri.queryParameterNames.contains(ParamKey.SOURCE))
+        assertEquals("ddg_androideu", uri.getQueryParameter(ParamKey.SOURCE))
     }
+
+    @Test
+    fun whenAddingCustomParamsIfStoreContainsAtbIsAdded() {
+        whenever(mockStatisticsStore.atb).thenReturn(Atb("v105-2ma"))
+        testee.addCustomQueryParams(builder)
+        val uri = builder.build()
+        assertTrue(uri.queryParameterNames.contains(ParamKey.ATB))
+        assertEquals("v105-2ma", uri.getQueryParameter(ParamKey.ATB))
+    }
+
+    @Test
+    fun whenAddingCustomParamsIfIsStoreMissingAtbThenAtbIsNotAdded() {
+        whenever(mockStatisticsStore.atb).thenReturn(null)
+
+        testee.addCustomQueryParams(builder)
+        val uri = builder.build()
+        assertFalse(uri.queryParameterNames.contains(ParamKey.ATB))
+    }
+
+    @Test
+    fun whenSerpRemovalFeatureIsActiveThenHideParamIsAddedToSerpUrl() {
+        val serpRemovalVariant = Variant("foo", 100.0, features = listOf(VariantManager.VariantFeature.SerpHeaderRemoval), filterBy = { true })
+        whenever(mockVariantManager.getVariant()).thenReturn(serpRemovalVariant)
+
+        testee.addCustomQueryParams(builder)
+
+        val uri = builder.build()
+        assertTrue(uri.queryParameterNames.contains(ParamKey.HIDE_SERP))
+    }
+
+    @Test
+    fun whenSerpRemovalFeatureIsInactiveThenHideParamIsNotAddedToSerpUrl() {
+        testee.addCustomQueryParams(builder)
+
+        val uri = builder.build()
+        assertFalse(uri.queryParameterNames.contains(ParamKey.HIDE_SERP))
+    }
+
 }

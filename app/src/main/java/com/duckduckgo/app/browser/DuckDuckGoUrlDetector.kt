@@ -17,30 +17,40 @@
 package com.duckduckgo.app.browser
 
 import android.net.Uri
+import com.duckduckgo.app.global.AppUrl
+import com.duckduckgo.app.global.AppUrl.ParamKey
 import javax.inject.Inject
-
 
 class DuckDuckGoUrlDetector @Inject constructor() {
 
-    fun isDuckDuckGoUrl(uri: Uri): Boolean {
-        return "duckduckgo.com" == uri.host
+    fun isDuckDuckGoUrl(uri: String): Boolean {
+        return AppUrl.Url.HOST == uri.toUri().host
     }
 
-    fun isDuckDuckGoUrl(uriString: String): Boolean {
-        return isDuckDuckGoUrl(uriString.toUri())
+    fun isDuckDuckGoQueryUrl(uri: String): Boolean {
+        return isDuckDuckGoUrl(uri) && hasQuery(uri)
     }
 
-    fun hasQuery(uriString: String): Boolean {
-        return uriString.toUri().queryParameterNames.contains(queryParameter)
+    private fun hasQuery(uri: String): Boolean {
+        return uri.toUri().queryParameterNames.contains(ParamKey.QUERY)
     }
 
     fun extractQuery(uriString: String): String? {
         val uri = uriString.toUri()
-        return uri.getQueryParameter(queryParameter)
+        return uri.getQueryParameter(ParamKey.QUERY)
     }
 
-    private companion object {
-        const val queryParameter = "q"
+    fun isDuckDuckGoVerticalUrl(uri: String): Boolean {
+        return isDuckDuckGoUrl(uri) && hasVertical(uri)
+    }
+
+    private fun hasVertical(uri: String): Boolean {
+        return uri.toUri().queryParameterNames.contains(ParamKey.VERTICAL)
+    }
+
+    fun extractVertical(uriString: String): String? {
+        val uri = uriString.toUri()
+        return uri.getQueryParameter(ParamKey.VERTICAL)
     }
 
     private fun String.toUri(): Uri {

@@ -18,9 +18,9 @@ package com.duckduckgo.app.browser.omnibar
 
 import android.content.Context
 import android.graphics.Rect
-import android.support.v7.widget.AppCompatEditText
 import android.util.AttributeSet
 import android.view.KeyEvent
+import androidx.appcompat.widget.AppCompatEditText
 import com.duckduckgo.app.global.view.showKeyboard
 
 /**
@@ -32,6 +32,13 @@ class KeyboardAwareEditText : AppCompatEditText {
     constructor(context: Context) : this(context, null)
     constructor(context: Context, attrs: AttributeSet?) : this(context, attrs, 0)
     constructor(context: Context, attrs: AttributeSet?, defStyleAttr: Int) : super(context, attrs, defStyleAttr)
+
+    override fun onFocusChanged(focused: Boolean, direction: Int, previouslyFocusedRect: Rect?) {
+        super.onFocusChanged(focused, direction, previouslyFocusedRect)
+        if (focused) {
+            showKeyboard()
+        }
+    }
 
     var onBackKeyListener: OnBackKeyListener? = null
 
@@ -51,17 +58,8 @@ class KeyboardAwareEditText : AppCompatEditText {
         }
     }
 
-    override fun onFocusChanged(focused: Boolean, direction: Int, previouslyFocusedRect: Rect?) {
-        super.onFocusChanged(focused, direction, previouslyFocusedRect)
+    interface OnBackKeyListener {
 
-        if (focused) {
-            showKeyboard()
-        }
+        fun onBackKey(): Boolean
     }
-}
-
-interface OnBackKeyListener {
-
-    fun onBackKey(): Boolean
-
 }

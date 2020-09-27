@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
+
 <!--
   ~ Copyright (c) 2018 DuckDuckGo
   ~
@@ -16,8 +17,23 @@
   -->
 
 <resources>
-    <dimen name="onboardingButtonTextSize">14sp</dimen>
-    <dimen name="onboardingButtonPadding">10dp</dimen>
-    <dimen name="onboardingTitleTextSize">21sp</dimen>
-    <dimen name="onboardingSubtitleTextSize">16sp</dimen>
+    <dimen name="modalCardTitleTextSize">20sp</dimen>
+    <dimen name="modalCardDescriptionTextSize">14sp</dimen>
+    <dimen name="modalCardEditTextSize">14sp</dimen>
+    <dimen name="modalCardHeaderElevation">4dp</dimen>
+    <dimen name="modalCardMajorButtonTextSize">15sp</dimen>
+
+    <dimen name="feedbackCardVerticalMargin">16dp</dimen>
+    <dimen name="feedbackFormFieldsMargin">16dp</dimen>
+    <dimen name="feedbackCardHorizontalMargin">16dp</dimen>
+    <dimen name="feedbackTitleMarginTop">30dp</dimen>
+
+    <dimen name="settingsItemHorizontalPadding">20dp</dimen>
+
+    <dimen name="systemSearchResultsElevation">4dp</dimen>
+
+    <dimen name="changeAppIconPadding">16dp</dimen>
+    <dimen name="changeAppIconListPadding">4dp</dimen>
+    <dimen name="changeAppIconSize">75dp</dimen>
+
 </resources>

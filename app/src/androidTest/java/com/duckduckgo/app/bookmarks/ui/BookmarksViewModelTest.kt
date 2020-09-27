@@ -16,14 +16,16 @@
 
 package com.duckduckgo.app.bookmarks.ui
 
-import android.arch.core.executor.testing.InstantTaskExecutorRule
-import android.arch.lifecycle.MutableLiveData
-import android.arch.lifecycle.Observer
+import androidx.arch.core.executor.testing.InstantTaskExecutorRule
+import androidx.lifecycle.MutableLiveData
+import androidx.lifecycle.Observer
+import com.duckduckgo.app.InstantSchedulersRule
 import com.duckduckgo.app.bookmarks.db.BookmarkEntity
 import com.duckduckgo.app.bookmarks.db.BookmarksDao
-import com.nhaarman.mockito_kotlin.mock
-import com.nhaarman.mockito_kotlin.verify
-import com.nhaarman.mockito_kotlin.whenever
+import com.nhaarman.mockitokotlin2.mock
+import com.nhaarman.mockitokotlin2.verify
+import com.nhaarman.mockitokotlin2.whenever
+import org.junit.After
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -36,6 +38,10 @@ class BookmarksViewModelTest {
     @get:Rule
     @Suppress("unused")
     var instantTaskExecutorRule = InstantTaskExecutorRule()
+
+    @get:Rule
+    @Suppress("unused")
+    val schedulers = InstantSchedulersRule()
 
     private val liveData = MutableLiveData<List<BookmarkEntity>>()
     private val viewStateObserver: Observer<BookmarksViewModel.ViewState> = mock()
@@ -55,6 +61,12 @@ class BookmarksViewModelTest {
     fun before() {
         liveData.value = emptyList()
         whenever(bookmarksDao.bookmarks()).thenReturn(liveData)
+    }
+
+    @After
+    fun after() {
+        testee.viewState.removeObserver(viewStateObserver)
+        testee.command.removeObserver(commandObserver)
     }
 
     @Test
@@ -89,5 +101,4 @@ class BookmarksViewModelTest {
         assertNotNull(captor.value)
         assertNotNull(captor.value.bookmarks)
     }
-
 }
